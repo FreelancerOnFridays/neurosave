@@ -44,6 +44,30 @@ router = Router()
 _bg_tasks: set[asyncio.Task[None]] = set()
 
 
+def _replace_event_time(text: str, old_iso: str | None, new_iso: str | None, tz_name: str) -> str:
+    """Replace the old event clock time inside a reminder text with the new one."""
+    if not old_iso or not new_iso:
+        return text
+    try:
+        tz = ZoneInfo(tz_name)
+        old_dt = datetime.fromisoformat(old_iso)
+        new_dt = datetime.fromisoformat(new_iso)
+        if old_dt.tzinfo is None:
+            old_dt = old_dt.replace(tzinfo=timezone.utc)
+        if new_dt.tzinfo is None:
+            new_dt = new_dt.replace(tzinfo=timezone.utc)
+        old_loc = old_dt.astimezone(tz)
+        new_loc = new_dt.astimezone(tz)
+        for fmt in ("{h:02d}:{m}", "{h}:{m}"):
+            old_str = fmt.format(h=old_loc.hour, m=old_loc.strftime("%M"))
+            new_str = fmt.format(h=new_loc.hour, m=new_loc.strftime("%M"))
+            if old_str in text:
+                return text.replace(old_str, new_str)
+    except Exception:
+        pass
+    return text
+
+
 def _format_delay(seconds: float, lang: str) -> str:
     lbl = _RU_LABELS if lang == "ru" else _EN_LABELS
     total_minutes = int(seconds // 60)
@@ -265,18 +289,24 @@ async def _process_owner_text(
                 if target:
                     remove_reminder(owner_id, target)
                     adj_d = delay_from_iso(action.new_reminder_time_iso)
+                    new_text = _replace_event_time(
+                        target.reminder_text,
+                        old_iso=target.event_time_iso,
+                        new_iso=parsed.event_time_iso,
+                        tz_name=tz_name,
+                    )
                     new_r = ActiveReminder(
-                        reminder_text=target.reminder_text,
+                        reminder_text=new_text,
                         reminder_time_iso=action.new_reminder_time_iso,
-                        event_time_iso=target.event_time_iso,
+                        event_time_iso=parsed.event_time_iso or target.event_time_iso,
                         lead_description=action.lead_description,
                     )
                     schedule_reminder(bot, owner_id, new_r, adj_d)
                     time_str = _format_time_local(action.new_reminder_time_iso, tz_name, lang)
                     if action.lead_description:
-                        confirm = f"✅ Перенёс {action.lead_description}: {target.reminder_text} ({time_str})"
+                        confirm = f"✅ Перенёс {action.lead_description}: {new_text} ({time_str})"
                     else:
-                        confirm = f"✅ Перенёс на {time_str}: {target.reminder_text}"
+                        confirm = f"✅ Перенёс на {time_str}: {new_text}"
                     await message.answer(confirm)
                     return
 
