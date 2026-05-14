@@ -108,6 +108,12 @@ def _find_matching_reminder(active: list[ActiveReminder], new_text: str) -> Acti
         new_words = {w for w in new_lower.split() if len(w) > 3}
         if existing_words & new_words:
             return r
+        # Stem match: handles Russian inflection (доктор / доктору / доктора)
+        for ew in existing_words:
+            for nw in new_words:
+                stem = min(5, len(ew), len(nw))
+                if stem >= 4 and ew[:stem] == nw[:stem]:
+                    return r
     return None
 
 
