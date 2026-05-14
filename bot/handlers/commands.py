@@ -28,7 +28,8 @@ async def cmd_start(message: Message) -> None:
     await message.answer(
         "👋 NeuroSave активирован.\n\n"
         "Доступные команды:\n"
-        "/tasks — список задач\n"
+        "/today — расписание на сегодня\n"
+        "/tasks — делегированные задачи\n"
         "/reminders — активные напоминания\n"
         "/brief — утренний брифинг (отправить сейчас)\n"
         "/brief HH:MM — изменить время брифинга\n"
@@ -172,6 +173,15 @@ async def cmd_ask(message: Message, session: AsyncSession) -> None:
 @router.message(Command("digest"))
 async def cmd_digest_handler(message: Message, session: AsyncSession) -> None:
     await cmd_digest(message, session)
+
+
+@router.message(Command("today"))
+async def cmd_today(message: Message) -> None:
+    if message.from_user is None or message.from_user.id != settings.owner_chat_id:
+        return
+    from bot.schedule import build_today_schedule
+    text, markup = build_today_schedule(message.from_user.id)
+    await message.answer(text, parse_mode="HTML", reply_markup=markup)
 
 
 @router.message(Command("brief"))
