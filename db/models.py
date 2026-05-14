@@ -35,6 +35,7 @@ class Task(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     assignee_name: Mapped[str | None] = mapped_column(String(256))
     assignee_user_id: Mapped[int | None] = mapped_column(BigInteger)
+    assignee_username: Mapped[str | None] = mapped_column(String(256))
     deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     business_connection_id: Mapped[str | None] = mapped_column(String(256))
     status: Mapped[TaskStatus] = mapped_column(
@@ -68,6 +69,7 @@ class Contact(Base):
     owner_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     name: Mapped[str | None] = mapped_column(String(256))
+    username: Mapped[str | None] = mapped_column(String(256))
     saved_name: Mapped[str | None] = mapped_column(String(256))
     has_business_chat: Mapped[bool] = mapped_column(default=False, nullable=False)
     is_vip: Mapped[bool] = mapped_column(default=False, nullable=False)
@@ -91,6 +93,7 @@ class GhostInquiry(Base):
     owner_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     caller_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     caller_name: Mapped[str | None] = mapped_column(String(256))
+    caller_username: Mapped[str | None] = mapped_column(String(256))
     summary: Mapped[str | None] = mapped_column(Text)
     category: Mapped[InquiryCategory | None] = mapped_column(
         Enum(InquiryCategory, values_callable=lambda obj: [e.value for e in obj])

@@ -152,6 +152,7 @@ async def handle_business_message(
 
     sender_id = message.from_user.id if message.from_user else None
     sender_name = message.from_user.full_name if message.from_user else None
+    sender_username = message.from_user.username if message.from_user else None
 
     if message.business_connection_id:
         set_business_connection_id(message.business_connection_id)
@@ -162,6 +163,7 @@ async def handle_business_message(
             owner_id=settings.owner_chat_id,
             user_id=message.chat.id,
             name=message.chat.full_name,
+            username=message.chat.username,
             has_business_chat=True,
         )
 
@@ -236,6 +238,7 @@ async def handle_business_message(
                             owner_id=settings.owner_chat_id,
                             caller_id=sender_id,
                             caller_name=sender_name,
+                            caller_username=sender_username,
                             chat_id=message.chat.id,
                         )
                         await ghost_repo.resolve_inquiry(session, inquiry, summary, category)
@@ -245,6 +248,7 @@ async def handle_business_message(
                             owner_id=settings.owner_chat_id,
                             caller_id=sender_id,
                             caller_name=sender_name,
+                            caller_username=sender_username,
                             chat_id=message.chat.id,
                         )
                     return
@@ -286,6 +290,10 @@ async def handle_business_message(
         except ValueError:
             logger.warning("Could not parse deadline: %s", extracted.deadline_iso)
 
+    # In a 1:1 business chat, chat.id IS the contact's Telegram user_id
+    is_private_business_chat = (
+        message.chat.type == "private" and message.chat.id != settings.owner_chat_id
+    )
     await task_repo.create_task(
         session,
         owner_id=settings.owner_chat_id,
@@ -293,6 +301,8 @@ async def handle_business_message(
         message_id=message.message_id,
         description=extracted.description,
         assignee_name=extracted.assignee_name,
+        assignee_user_id=message.chat.id if is_private_business_chat else None,
+        assignee_username=message.chat.username if is_private_business_chat else None,
         deadline=deadline,
         business_connection_id=message.business_connection_id,
     )

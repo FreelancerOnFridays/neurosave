@@ -25,9 +25,11 @@ from db.engine import get_session
 from db.repositories import contacts as contact_repo
 from db.repositories import ghost as ghost_repo
 from db.repositories import messages as msg_repo
+from db.repositories import tasks as task_repo
 from services.ai import (
     answer_from_context,
     embed_text,
+    extract_task_from_message,
     generate_dispatch_message,
     get_style_profile,
     parse_dispatch_command,
@@ -189,20 +191,22 @@ async def handle_contact_share(message: Message, session: AsyncSession) -> None:
     parts = [c.first_name]
     if c.last_name:
         parts.append(c.last_name)
-    saved_name = " ".join(parts)
+    full_name = " ".join(parts)
 
-    db_contact = await contact_repo.upsert_contact(
-        session, owner_id=settings.owner_chat_id, user_id=c.user_id, name=None,
+    await contact_repo.upsert_contact(
+        session,
+        owner_id=settings.owner_chat_id,
+        user_id=c.user_id,
+        name=full_name,
+        has_business_chat=True,
     )
     await contact_repo.set_saved_name(
-        session, owner_id=settings.owner_chat_id, user_id=c.user_id, saved_name=saved_name,
+        session, owner_id=settings.owner_chat_id, user_id=c.user_id, saved_name=full_name,
     )
 
-    profile = db_contact.name or "—"
     await message.answer(
-        f"✅ Контакт сохранён.\n"
-        f"Псевдоним: <b>{saved_name}</b>\n"
-        f"Профиль в Telegram: {profile}",
+        f"✅ Контакт сохранён: <b>{full_name}</b>\n"
+        f"Теперь можно писать «Напиши {full_name.split()[0]}…»",
         parse_mode="HTML",
     )
 
@@ -216,6 +220,7 @@ async def _process_owner_text(
     owner_id = settings.owner_chat_id
     lang = get_language()
     tz_name = get_timezone()
+    original_text = text
 
     parsed = await parse_dispatch_command(text, language=lang, tz_name=tz_name)
 
@@ -315,6 +320,13 @@ async def _process_owner_text(
             remove_reminder(owner_id, existing)
 
         reminder_text = existing.reminder_text if (is_update and existing) else parsed.reminder_text
+        if is_update and existing:
+            reminder_text = _replace_event_time(
+                reminder_text,
+                old_iso=existing.event_time_iso,
+                new_iso=parsed.event_time_iso,
+                tz_name=tz_name,
+            )
         reminder = ActiveReminder(
             reminder_text=reminder_text,
             reminder_time_iso=iso or "",
@@ -387,6 +399,34 @@ async def _process_owner_text(
                     sent_to.append(f"{display_name} ({_format_delay(dispatch_delay, lang)})")
                 else:
                     sent_to.append(display_name)
+
+                # Extract task from the original owner text (e.g. voice command)
+                try:
+                    extracted = await extract_task_from_message(
+                        original_text, language=lang, tz_name=tz_name
+                    )
+                    if extracted.has_task and extracted.description:
+                        deadline: datetime | None = None
+                        if extracted.deadline_iso:
+                            try:
+                                deadline = datetime.fromisoformat(extracted.deadline_iso)
+                                if deadline.tzinfo is None:
+                                    deadline = deadline.replace(tzinfo=timezone.utc)
+                            except ValueError:
+                                pass
+                        await task_repo.create_task(
+                            session,
+                            owner_id=settings.owner_chat_id,
+                            chat_id=chat_id,
+                            message_id=message.message_id,
+                            description=extracted.description,
+                            assignee_name=display_name,
+                            assignee_user_id=contact.user_id,
+                            assignee_username=contact.username,
+                            deadline=deadline,
+                        )
+                except Exception:
+                    logger.exception("Task extraction after dispatch failed for %s", display_name)
 
             lines: list[str] = []
             if sent_to:

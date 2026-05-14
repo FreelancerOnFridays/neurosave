@@ -95,11 +95,13 @@ async def create_inquiry(
     caller_id: int,
     caller_name: str | None,
     chat_id: int,
+    caller_username: str | None = None,
 ) -> GhostInquiry:
     inquiry = GhostInquiry(
         owner_id=owner_id,
         caller_id=caller_id,
         caller_name=caller_name,
+        caller_username=caller_username,
         chat_id=chat_id,
         ghost_pending=True,
     )

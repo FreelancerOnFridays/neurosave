@@ -16,6 +16,9 @@ dependencies = [
     "beartype>=0.18",
     "redis>=5.0",
     "tzdata>=2026.2",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

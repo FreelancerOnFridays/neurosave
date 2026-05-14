@@ -4,7 +4,12 @@ import logging
 
 from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    WebAppInfo,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -28,6 +33,7 @@ async def cmd_start(message: Message) -> None:
     await message.answer(
         "👋 NeuroSave активирован.\n\n"
         "Доступные команды:\n"
+        "/app — открыть мини-приложение\n"
         "/today — расписание на сегодня\n"
         "/tasks — делегированные задачи\n"
         "/reminders — активные напоминания\n"
@@ -40,6 +46,23 @@ async def cmd_start(message: Message) -> None:
         "/vip — VIP-контакты\n"
         "/ask — поиск по истории чатов\n"
         "/digest — дайджест пропущенных сообщений"
+    )
+
+
+@router.message(Command("app"))
+async def cmd_app(message: Message) -> None:
+    if message.from_user is None or message.from_user.id != settings.owner_chat_id:
+        return
+    await message.answer(
+        "📱 NeuroSave Mini App:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="Открыть приложение",
+                    web_app=WebAppInfo(url=settings.miniapp_url),
+                )
+            ]]
+        ),
     )
 
 

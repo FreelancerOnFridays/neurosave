@@ -15,6 +15,9 @@ class Settings(BaseSettings):
 
     owner_chat_id: int
     owner_timezone: str = "Europe/Moscow"
+    api_port: int = 8000
+    miniapp_url: str = "http://localhost:3000"
+    api_dev_bypass: bool = False
 
 
 @beartype

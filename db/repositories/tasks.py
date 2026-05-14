@@ -19,6 +19,7 @@ async def create_task(
     description: str,
     assignee_name: str | None = None,
     assignee_user_id: int | None = None,
+    assignee_username: str | None = None,
     deadline: datetime | None = None,
     business_connection_id: str | None = None,
 ) -> Task:
@@ -29,6 +30,7 @@ async def create_task(
         description=description,
         assignee_name=assignee_name,
         assignee_user_id=assignee_user_id,
+        assignee_username=assignee_username,
         deadline=deadline,
         business_connection_id=business_connection_id,
     )

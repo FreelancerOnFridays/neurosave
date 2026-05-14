@@ -7,10 +7,12 @@ import sys
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+import uvicorn
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
+from api.app import create_app
 from bot.handlers import business_messages, callbacks, commands, direct_messages, ghost
 from bot.middlewares.db_session import DbSessionMiddleware
 from config import settings
@@ -42,14 +44,26 @@ async def main() -> None:
     dp.include_router(callbacks.router)
     dp.include_router(direct_messages.router)
 
+    api_app = create_app()
+    api_app.state.bot = bot
+
     await broker.startup()
     logger.info("Broker started")
 
-    logger.info("Starting bot (allowed_updates=%s)", _ALLOWED_UPDATES)
+    server_config = uvicorn.Config(
+        api_app,
+        host="0.0.0.0",
+        port=settings.api_port,
+        log_level="warning",
+    )
+    server = uvicorn.Server(server_config)
+
+    logger.info("Starting bot (allowed_updates=%s) and API on port %d", _ALLOWED_UPDATES, settings.api_port)
     await asyncio.gather(
         dp.start_polling(bot, allowed_updates=_ALLOWED_UPDATES),
         deadline_reminder.run_loop(bot),
         morning_brief.run_loop(bot),
+        server.serve(),
     )
 
 

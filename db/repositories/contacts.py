@@ -15,6 +15,7 @@ async def upsert_contact(
     owner_id: int,
     user_id: int,
     name: str | None = None,
+    username: str | None = None,
     has_business_chat: bool = False,
 ) -> Contact:
     result = await session.execute(
@@ -30,6 +31,7 @@ async def upsert_contact(
             owner_id=owner_id,
             user_id=user_id,
             name=name,
+            username=username,
             has_business_chat=has_business_chat,
             last_seen=now,
         )
@@ -37,6 +39,8 @@ async def upsert_contact(
     else:
         if name:
             contact.name = name
+        if username:
+            contact.username = username
         if has_business_chat:
             contact.has_business_chat = True
         contact.last_seen = now
