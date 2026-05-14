@@ -1,0 +1,541 @@
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+from beartype import beartype
+from openai import AsyncOpenAI
+from pydantic import BaseModel
+
+from config import settings
+from db.models import InquiryCategory, Message
+
+logger = logging.getLogger(__name__)
+
+GPT_MODEL = "gpt-5.4-mini"
+EMBEDDING_MODEL = "text-embedding-3-small"
+
+_client: AsyncOpenAI | None = None
+
+_LANG_NAMES = {"ru": "Russian", "en": "English"}
+
+_style_cache: dict[int, tuple[str, datetime]] = {}
+_STYLE_TTL = timedelta(hours=1)
+
+
+def _get_client() -> AsyncOpenAI:
+    global _client
+    if _client is None:
+        _client = AsyncOpenAI(api_key=settings.openai_api_key)
+    return _client
+
+
+@beartype
+async def extract_style_profile(texts: list[str]) -> str:
+    sample = "\n---\n".join(texts[:30])
+    client = _get_client()
+    completion = await client.chat.completions.create(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Analyze the following message samples written by one person and describe their "
+                    "writing style in 2-3 sentences. Focus on: sentence length, formality level, "
+                    "punctuation habits, emoji usage, tone, and any recurring patterns. "
+                    "Be specific — this description will instruct an AI to write in the same style."
+                ),
+            },
+            {"role": "user", "content": sample},
+        ],
+        max_completion_tokens=150,
+    )
+    return (completion.choices[0].message.content or "").strip()
+
+
+@beartype
+async def get_style_profile(owner_id: int, texts: list[str]) -> str:
+    """Returns a cached style descriptor, refreshing if older than 1 hour."""
+    now = datetime.now(timezone.utc)
+    cached = _style_cache.get(owner_id)
+    if cached and (now - cached[1]) < _STYLE_TTL:
+        return cached[0]
+    if not texts:
+        return ""
+    profile = await extract_style_profile(texts)
+    _style_cache[owner_id] = (profile, now)
+    return profile
+
+
+class ExtractedTask(BaseModel):
+    has_task: bool
+    description: str | None = None
+    assignee_name: str | None = None
+    deadline_iso: str | None = None
+
+
+class DispatchCommand(BaseModel):
+    has_dispatch: bool
+    is_reminder: bool = False
+    is_settings: bool = False
+    is_ghost: bool = False
+    recipients: list[str] = []
+    literal_message: str | None = None
+    message_intent: str | None = None
+    reminder_text: str | None = None
+    scheduled_at_iso: str | None = None
+    # reminder-specific fields
+    event_time_iso: str | None = None
+    reminder_time_iso: str | None = None
+    lead_description: str | None = None
+    # settings-specific fields
+    timezone_iana: str | None = None
+    # ghost-specific fields
+    ghost_active: bool = True
+    ghost_away_message: str | None = None
+    ghost_until_iso: str | None = None
+
+
+class ReminderAction(BaseModel):
+    action: str  # "adjust_time" | "delete" | "none"
+    reminder_hint: str | None = None
+    new_reminder_time_iso: str | None = None
+    lead_description: str | None = None
+
+
+@beartype
+async def extract_task_from_message(text: str, language: str = "ru", tz_name: str = "UTC") -> ExtractedTask:
+    now = datetime.now(ZoneInfo(tz_name)).strftime("%Y-%m-%dT%H:%M:%S%z")
+    lang_name = _LANG_NAMES.get(language, "Russian")
+    client = _get_client()
+    completion = await client.beta.chat.completions.parse(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"Current local time ({tz_name}): {now}\n"
+                    f"Respond in {lang_name}.\n"
+                    "Analyze the message and determine if it contains a task or assignment "
+                    "(something that needs to be done by someone). "
+                    "Extract: what needs to be done, who is responsible (if mentioned), "
+                    "and the deadline converted to ISO 8601 UTC (e.g. '2026-05-14T05:00:00Z'). "
+                    f"Write the description and assignee name in {lang_name}. "
+                    "If no clear task is present, set has_task=false."
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+        response_format=ExtractedTask,
+    )
+    parsed = completion.choices[0].message.parsed
+    return parsed if parsed is not None else ExtractedTask(has_task=False)
+
+
+@beartype
+async def parse_dispatch_command(text: str, language: str = "ru", tz_name: str = "UTC") -> DispatchCommand:
+    local_now = datetime.now(ZoneInfo(tz_name))
+    now_str = local_now.strftime("%Y-%m-%dT%H:%M:%S%z")
+    lang_name = _LANG_NAMES.get(language, "Russian")
+    client = _get_client()
+    completion = await client.beta.chat.completions.parse(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"Current local time ({tz_name}): {now_str}\n"
+                    f"Respond in {lang_name}.\n"
+                    "Classify the message as one of two types:\n\n"
+                    "TYPE A — DISPATCH: the owner wants to send a message to one or more people.\n"
+                    "  Set has_dispatch=true, is_reminder=false.\n"
+                    "  - recipients: list of contact names, ALWAYS normalized to Russian nominative case "
+                    "(именительный падеж), first letter capitalized. "
+                    "Examples: 'маме' → 'Мама', 'Диме' → 'Дима', 'Сашу' → 'Саша', 'папе' → 'Папа', "
+                    "'брату' → 'Брат', 'Вовке' → 'Вова'. "
+                    "If the name appears in quotes (e.g. «Мама», «Дима»), use the name inside the quotes.\n"
+                    "  - literal_message: ONLY if the owner provides the exact text they want sent "
+                    "(typically after the recipient, in quotes, or as a direct phrase). "
+                    "IMPORTANT: a quoted word that identifies the RECIPIENT is NOT a literal_message — "
+                    "e.g. 'Напиши «мама», приеду' → recipient='Мама', message_intent='приеду' (not literal). "
+                    "When literal_message is set, leave message_intent null. Never rephrase literal text.\n"
+                    "  - message_intent: if the owner describes what to convey without giving exact wording. "
+                    "Leave null when literal_message is set.\n"
+                    "  - scheduled_at_iso: send time in ISO 8601 with timezone offset if specified, else null.\n"
+                    "  Common Russian patterns — always TYPE A:\n"
+                    "    'Напиши маме привет' → recipient='Мама', literal_message='привет'\n"
+                    "    'Напиши «мама», приеду' → recipient='Мама', message_intent='приеду'\n"
+                    "    'Скажи Диме, что встреча в 6' → recipient='Дима', message_intent='встреча в 6'\n"
+                    "    'Напомни Саше про отчёт' → recipient='Саша', message_intent='про отчёт'\n\n"
+                    "TYPE B — REMINDER: the owner wants to be reminded of something at a future time "
+                    "(no other recipients, the reminder is for themselves).\n"
+                    "  Set is_reminder=true, has_dispatch=false, is_settings=false, recipients=[].\n"
+                    "  - reminder_text: description of what to remind about, including the event time "
+                    "if known (e.g. 'haircut at 15:00', 'meeting at 18:00 tomorrow'). "
+                    "Keep it short but self-explanatory.\n"
+                    "  - event_time_iso: the time of the actual event (e.g. appointment time) in ISO 8601 with "
+                    "timezone offset. Null if no event time is mentioned.\n"
+                    "  - reminder_time_iso: when to SEND the reminder in ISO 8601 with timezone offset. "
+                    "For relative times ('in X hours/minutes', 'через X часов/минут'), add EXACTLY that "
+                    "offset to the current local time shown above — do not use a different base. "
+                    "If the owner does not specify a reminder time, pick a sensible lead time: "
+                    "for same-day events use 2 hours before; for next-day events use morning of that day (09:00). "
+                    "If there is no event time at all, default to 1 hour from now. "
+                    "Never set this to the current time or the event time itself.\n"
+                    "  - lead_description: human-readable description of the lead time chosen, in "
+                    f"{lang_name} (e.g. 'за 2 часа' / '2 hours before' / 'утром того дня'). "
+                    "Null if owner explicitly specified the reminder time.\n\n"
+                    "TYPE C — SETTINGS CHANGE: the owner wants to change a bot setting.\n"
+                    "  Set is_settings=true, has_dispatch=false, is_reminder=false, is_ghost=false.\n"
+                    "  - timezone_iana: if the owner mentions a new location or timezone (city, country, UTC offset), "
+                    "resolve it to an IANA timezone string (e.g. 'Europe/Warsaw', 'America/New_York'). "
+                    "Null if no timezone change is requested.\n\n"
+                    "TYPE D — GHOST MODE: the owner is describing being busy/unavailable, OR explicitly "
+                    "activating/deactivating ghost mode. Examples: 'I'm in a meeting until 6pm', 'I'm busy today', "
+                    "'going offline', 'I'm free now', '/ghost off', 'turn off ghost mode'.\n"
+                    "  Set is_ghost=true, has_dispatch=false, is_reminder=false, is_settings=false.\n"
+                    "  - ghost_active: true if they are becoming unavailable, false if they are free again.\n"
+                    "  - ghost_away_message: when ghost_active=true:\n"
+                    "      * If the owner provides explicit text to use as the away message "
+                    "(e.g. after 'change message to:', 'автоответ:', 'use text:', or in quotes like «...»), "
+                    "copy that text VERBATIM — never rephrase.\n"
+                    "      * Otherwise compose a complete, natural away message in "
+                    f"{lang_name}. Include: (1) that the person is unavailable, (2) the reason/time "
+                    "if given, (3) an invitation to briefly describe their issue. "
+                    "Example for 'meeting until 12': 'Сейчас на встрече, буду свободен около 12:00. "
+                    "Если вопрос срочный — опишите кратко, отвечу как освобожусь.' "
+                    "Keep it 1-2 sentences, natural, no emojis.\n"
+                    "  - ghost_until_iso: if the owner mentions when they'll be free, the ISO 8601 datetime "
+                    "with timezone offset at which ghost mode should auto-deactivate. Null otherwise.\n\n"
+                    "IMPORTANT: TYPE D takes priority over TYPE B. If the owner describes being busy or "
+                    "in a meeting, always classify as TYPE D, never TYPE B.\n\n"
+                    "If none of the above apply, set has_dispatch=false, is_reminder=false, is_settings=false, is_ghost=false."
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+        response_format=DispatchCommand,
+    )
+    parsed = completion.choices[0].message.parsed
+    return parsed if parsed is not None else DispatchCommand(has_dispatch=False)
+
+
+@beartype
+async def generate_dispatch_message(
+    intent: str,
+    recipient_name: str | None,
+    language: str = "ru",
+    style_profile: str = "",
+) -> str:
+    lang_name = _LANG_NAMES.get(language, "Russian")
+    context = f"Message to convey: {intent}"
+    if recipient_name:
+        context += f"\nRecipient: {recipient_name}"
+    style_note = f"\n\nMatch this writing style exactly: {style_profile}" if style_profile else ""
+    client = _get_client()
+    completion = await client.chat.completions.create(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"You are writing a short message in {lang_name} from a busy entrepreneur "
+                    "to a colleague. Make it sound natural and personal — like the owner typed it "
+                    "quickly themselves. One or two sentences max. No templates, no emojis at the "
+                    f"start, no 'Dear ...'. Get to the point.{style_note}"
+                ),
+            },
+            {"role": "user", "content": context},
+        ],
+        max_completion_tokens=120,
+    )
+    return (completion.choices[0].message.content or intent).strip()
+
+
+@beartype
+async def generate_nudge_message(
+    description: str,
+    assignee_name: str | None,
+    deadline: datetime | None,
+    language: str = "ru",
+    style_profile: str = "",
+) -> str:
+    lang_name = _LANG_NAMES.get(language, "Russian")
+    deadline_str = deadline.strftime("%d.%m.%Y %H:%M") if deadline else None
+
+    context_parts = [f"Task: {description}"]
+    if assignee_name:
+        context_parts.append(f"Person: {assignee_name}")
+    if deadline_str:
+        context_parts.append(f"Deadline: {deadline_str}")
+
+    style_note = f"\n\nMatch this writing style exactly: {style_profile}" if style_profile else ""
+    client = _get_client()
+    completion = await client.chat.completions.create(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"You are writing a reminder message in {lang_name} on behalf of a busy entrepreneur "
+                    "to a colleague or team member. "
+                    "Write 1-2 sentences that sound natural and personal, as if a real person typed it quickly. "
+                    "Do NOT use template phrases like 'Reminder:', 'Dear', emojis at the start, or bullet points. "
+                    f"Keep it casual but professional. Vary the phrasing.{style_note}"
+                ),
+            },
+            {"role": "user", "content": "\n".join(context_parts)},
+        ],
+        max_completion_tokens=120,
+    )
+    text = completion.choices[0].message.content or description
+    return text.strip()
+
+
+@beartype
+async def extract_reminder_from_context(
+    context_text: str,
+    trigger_text: str,
+    language: str = "ru",
+    tz_name: str = "UTC",
+) -> DispatchCommand:
+    """Given a referenced message (context) and an owner trigger ('remind me'), extract a reminder."""
+    local_now = datetime.now(ZoneInfo(tz_name))
+    now_str = local_now.strftime("%Y-%m-%dT%H:%M:%S%z")
+    lang_name = _LANG_NAMES.get(language, "Russian")
+    client = _get_client()
+    completion = await client.beta.chat.completions.parse(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"Current local time ({tz_name}): {now_str}\n"
+                    f"Respond in {lang_name}.\n"
+                    "The owner wants a reminder based on the following chat message. "
+                    "The owner's trigger may specify a time (e.g. 'remind me in 2 hours', 'tomorrow morning'); "
+                    "if no time is given, pick a sensible default.\n\n"
+                    "Return as TYPE B REMINDER:\n"
+                    "  is_reminder=true, has_dispatch=false.\n"
+                    "  - reminder_text: what to remind about, including key details from the context "
+                    f"(e.g. 'позвонить Диме по вопросу договора'). In {lang_name}.\n"
+                    "  - event_time_iso: event time if mentioned in context, in ISO 8601 with tz offset. Null if none.\n"
+                    "  - reminder_time_iso: when to send the reminder. If owner specifies a time in the trigger, "
+                    "use that. Otherwise pick a sensible lead: 2h before event if event_time given; "
+                    "next morning (09:00) if the event is tomorrow or later; in 1 hour if no event time.\n"
+                    "  - lead_description: human-readable description of the chosen lead time in "
+                    f"{lang_name}. Null if the owner explicitly named the reminder time."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Chat message to remember:\n{context_text}\n\nOwner's trigger: {trigger_text}",
+            },
+        ],
+        response_format=DispatchCommand,
+    )
+    parsed = completion.choices[0].message.parsed
+    return parsed if parsed is not None else DispatchCommand(has_dispatch=False, is_reminder=True,
+                                                              reminder_text=context_text[:80])
+
+
+@beartype
+async def parse_reminder_action(
+    text: str,
+    active_reminders_ctx: str,
+    language: str = "ru",
+    tz_name: str = "UTC",
+) -> ReminderAction:
+    """Detects adjust_time or delete actions against existing reminders."""
+    local_now = datetime.now(ZoneInfo(tz_name))
+    now_str = local_now.strftime("%Y-%m-%dT%H:%M:%S%z")
+    lang_name = _LANG_NAMES.get(language, "Russian")
+    client = _get_client()
+    completion = await client.beta.chat.completions.parse(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"Current local time ({tz_name}): {now_str}\n"
+                    f"Active reminders:\n{active_reminders_ctx}\n\n"
+                    f"Respond in {lang_name}.\n"
+                    "Determine if the message is about an existing reminder. Two possible actions:\n\n"
+                    "ACTION adjust_time: owner wants to change the time of a reminder.\n"
+                    "  - reminder_hint: keyword identifying which reminder (e.g. 'haircut').\n"
+                    "  - new_reminder_time_iso: new send time in ISO 8601 with timezone offset.\n"
+                    "  - lead_description: human-readable in "
+                    f"{lang_name} (e.g. 'за 1 час'). Null if owner gave explicit clock time.\n\n"
+                    "ACTION delete: owner wants to cancel/delete a reminder.\n"
+                    "  - reminder_hint: keyword identifying which reminder.\n\n"
+                    "If neither applies, set action='none'."
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+        response_format=ReminderAction,
+    )
+    parsed = completion.choices[0].message.parsed
+    return parsed if parsed is not None else ReminderAction(action="none")
+
+
+class _ClassifiedInquiry(BaseModel):
+    category: str
+    summary: str
+    has_question: bool
+
+
+@beartype
+async def classify_inquiry(text: str, language: str = "ru") -> tuple[InquiryCategory, str, bool]:
+    """Returns (category, one-line summary, has_question) for a ghost-mode inquiry message."""
+    lang_name = _LANG_NAMES.get(language, "Russian")
+    client = _get_client()
+    completion = await client.beta.chat.completions.parse(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"Respond in {lang_name}.\n"
+                    "Classify the following message from a contact.\n\n"
+                    "Categories:\n"
+                    "  Urgent — time-sensitive issue requiring immediate action\n"
+                    "  Sales — sales pitch, partnership proposal, or advertising\n"
+                    "  Team — message from a team member or employee\n"
+                    "  Spam — irrelevant, automated, or greeting-only message\n\n"
+                    "Return:\n"
+                    "  category: one of Urgent, Sales, Team, Spam\n"
+                    f"  summary: one concise sentence in {lang_name} describing what they want "
+                    "(use 'просто поздоровался' / 'just said hello' if it's only a greeting)\n"
+                    "  has_question: true if the message contains an actual request, question, or "
+                    "substantive content (not just a greeting or short phrase)"
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+        response_format=_ClassifiedInquiry,
+    )
+    parsed = completion.choices[0].message.parsed
+    if parsed is None:
+        return InquiryCategory.spam, text[:100], False
+    try:
+        cat = InquiryCategory(parsed.category)
+    except ValueError:
+        cat = InquiryCategory.spam
+    return cat, parsed.summary, parsed.has_question
+
+
+@beartype
+async def summarize_inquiry(text: str, language: str = "ru") -> str:
+    """Condenses a long inquiry into a single sentence."""
+    if len(text) < 120:
+        return text
+    lang_name = _LANG_NAMES.get(language, "Russian")
+    client = _get_client()
+    completion = await client.chat.completions.create(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"Summarize the following message in one concise sentence in {lang_name}. "
+                    "Keep the key ask or issue. No intro phrases."
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+        max_completion_tokens=80,
+    )
+    return (completion.choices[0].message.content or text).strip()
+
+
+@beartype
+async def transcribe_voice(audio_bytes: bytes) -> str:
+    """Transcribe a voice message (OGG/Opus) using OpenAI Whisper."""
+    import io
+    client = _get_client()
+    buf = io.BytesIO(audio_bytes)
+    buf.name = "audio.ogg"
+    transcript = await client.audio.transcriptions.create(model="whisper-1", file=buf)
+    return transcript.text.strip()
+
+
+@beartype
+async def generate_agenda_recommendation(context: str, language: str = "ru") -> str:
+    """1-2 sentence agenda recommendation for the morning brief."""
+    lang_name = _LANG_NAMES.get(language, "Russian")
+    client = _get_client()
+    completion = await client.chat.completions.create(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"You are a personal assistant. Based on the morning brief data below, "
+                    f"write 1-2 sentences in {lang_name} recommending who to contact first "
+                    "and why. Be specific and direct. No intro phrases, no emojis."
+                ),
+            },
+            {"role": "user", "content": context},
+        ],
+        max_completion_tokens=100,
+    )
+    return (completion.choices[0].message.content or "").strip()
+
+
+@beartype
+async def embed_text(text: str) -> list[float]:
+    client = _get_client()
+    response = await client.embeddings.create(model=EMBEDDING_MODEL, input=text)
+    return response.data[0].embedding
+
+
+@beartype
+async def answer_from_context(
+    query: str,
+    messages: list[Message],
+    language: str = "ru",
+    name_map: dict[int, str] | None = None,
+    tz_name: str = "UTC",
+) -> str:
+    lang_name = _LANG_NAMES.get(language, "Russian")
+    tz = ZoneInfo(tz_name)
+    context_lines: list[str] = []
+    for msg in sorted(messages, key=lambda m: m.timestamp):
+        if name_map and msg.sender_id and msg.sender_id in name_map:
+            who = name_map[msg.sender_id]
+        else:
+            who = msg.sender_name or f"ID {msg.sender_id}"
+        local_ts = msg.timestamp.astimezone(tz)
+        when = local_ts.strftime("%d.%m %H:%M")
+        context_lines.append(f"[{when}] {who}: {msg.text}")
+    context = "\n".join(context_lines)
+    client = _get_client()
+    completion = await client.chat.completions.create(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"Respond in {lang_name}. Use Telegram HTML formatting: "
+                    "<b>bold</b> for names and key facts, plain text otherwise. "
+                    "No markdown asterisks.\n"
+                    "You are a personal assistant answering questions about past conversations. "
+                    "The context below contains relevant messages from the owner's chat history "
+                    "with timestamps already converted to the owner's local timezone.\n"
+                    "Rules:\n"
+                    "- Always cite the date and time (from the timestamp in brackets) for each fact you state.\n"
+                    "- Use bullet points when citing 2+ separate facts.\n"
+                    "- If the answer isn't clearly present in the context, say so briefly.\n"
+                    "- Keep the total response under 5 sentences or 5 bullets."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Question: {query}\n\nRelevant messages:\n{context}",
+            },
+        ],
+        max_completion_tokens=400,
+    )
+    return (completion.choices[0].message.content or "").strip()
