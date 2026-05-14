@@ -249,6 +249,37 @@ async def _process_owner_text(
 
         active = get_active(owner_id)
         existing = _find_matching_reminder(active, parsed.reminder_text)
+
+        # No direct text match but reminders exist → ask parse_reminder_action
+        # whether this is actually a reschedule of an existing one (e.g.
+        # "доктора перенесли с 20 на 18" doesn't share words with
+        # "пойти к доктору в 20:00 сегодня", but the action model has context)
+        if existing is None and active:
+            ctx = _build_reminders_ctx(active, tz_name, lang)
+            try:
+                action = await parse_reminder_action(text, ctx, language=lang, tz_name=tz_name)
+            except Exception:
+                action = None
+            if action and action.action == "adjust_time" and action.new_reminder_time_iso:
+                target = _find_reminder_by_hint(active, action.reminder_hint)
+                if target:
+                    remove_reminder(owner_id, target)
+                    adj_d = delay_from_iso(action.new_reminder_time_iso)
+                    new_r = ActiveReminder(
+                        reminder_text=target.reminder_text,
+                        reminder_time_iso=action.new_reminder_time_iso,
+                        event_time_iso=target.event_time_iso,
+                        lead_description=action.lead_description,
+                    )
+                    schedule_reminder(bot, owner_id, new_r, adj_d)
+                    time_str = _format_time_local(action.new_reminder_time_iso, tz_name, lang)
+                    if action.lead_description:
+                        confirm = f"✅ Перенёс {action.lead_description}: {target.reminder_text} ({time_str})"
+                    else:
+                        confirm = f"✅ Перенёс на {time_str}: {target.reminder_text}"
+                    await message.answer(confirm)
+                    return
+
         is_update = existing is not None
         if is_update and existing:
             remove_reminder(owner_id, existing)
