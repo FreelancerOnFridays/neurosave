@@ -8,7 +8,6 @@ export function useTelegram() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    // @ts-expect-error - Telegram injects this global
     const WebApp = window.Telegram?.WebApp;
     if (!WebApp) {
       setReady(true);

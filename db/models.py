@@ -38,6 +38,9 @@ class Task(Base):
     assignee_username: Mapped[str | None] = mapped_column(String(256))
     deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     business_connection_id: Mapped[str | None] = mapped_column(String(256))
+    reminder_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    is_personal: Mapped[bool] = mapped_column(default=False, nullable=False)
+    reminder_fired: Mapped[bool] = mapped_column(default=False, nullable=False)
     status: Mapped[TaskStatus] = mapped_column(
         Enum(TaskStatus), default=TaskStatus.open, nullable=False
     )
@@ -84,6 +87,7 @@ class GhostSession(Base):
     is_active: Mapped[bool] = mapped_column(default=False, nullable=False)
     away_message: Mapped[str | None] = mapped_column(Text)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    silent_mode: Mapped[bool] = mapped_column(default=False, nullable=False)
 
 
 class GhostInquiry(Base):

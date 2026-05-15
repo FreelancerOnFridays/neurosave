@@ -81,8 +81,6 @@ async def _handle_remind_trigger(
     session: AsyncSession,
 ) -> None:
     """Owner typed 'remind me' in a business chat — create a reminder from context."""
-    from bot.reminder_store import ActiveReminder, schedule_reminder, delay_from_iso
-
     bcid = message.business_connection_id
     lang = get_language()
     tz_name = get_timezone()
@@ -115,15 +113,32 @@ async def _handle_remind_trigger(
     if not parsed.is_reminder or not parsed.reminder_text:
         return
 
+    from datetime import datetime, timezone as _tz
     iso = parsed.reminder_time_iso or parsed.scheduled_at_iso
-    delay = delay_from_iso(iso)
-    reminder = ActiveReminder(
-        reminder_text=parsed.reminder_text,
-        reminder_time_iso=iso or "",
-        event_time_iso=parsed.event_time_iso,
-        lead_description=parsed.lead_description,
+    reminder_time: datetime | None = None
+    if iso:
+        try:
+            reminder_time = datetime.fromisoformat(iso)
+            if reminder_time.tzinfo is None:
+                reminder_time = reminder_time.replace(tzinfo=_tz.utc)
+        except ValueError:
+            pass
+    deadline: datetime | None = None
+    if parsed.event_time_iso:
+        try:
+            deadline = datetime.fromisoformat(parsed.event_time_iso)
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=_tz.utc)
+        except ValueError:
+            pass
+
+    await task_repo.create_personal_task(
+        session,
+        owner_id=settings.owner_chat_id,
+        description=parsed.reminder_text,
+        deadline=deadline,
+        reminder_time=reminder_time,
     )
-    schedule_reminder(bot, settings.owner_chat_id, reminder, delay)
 
     # Send confirmation in the business chat, then delete trigger + confirmation
     try:
@@ -222,15 +237,16 @@ async def handle_business_message(
                         logger.exception("classify_inquiry failed for chat %d", message.chat.id)
                         category, summary, has_question = InquiryCategory.team, "", True
 
-                    away = gs.away_message or (DEFAULT_AWAY_RU if lang == "ru" else DEFAULT_AWAY_EN)
-                    try:
-                        await bot.send_message(
-                            chat_id=message.chat.id,
-                            text=away,
-                            business_connection_id=bcid,
-                        )
-                    except Exception:
-                        logger.warning("Ghost auto-reply failed for chat %d", message.chat.id)
+                    if not gs.silent_mode:
+                        away = gs.away_message or (DEFAULT_AWAY_RU if lang == "ru" else DEFAULT_AWAY_EN)
+                        try:
+                            await bot.send_message(
+                                chat_id=message.chat.id,
+                                text=away,
+                                business_connection_id=bcid,
+                            )
+                        except Exception:
+                            logger.warning("Ghost auto-reply failed for chat %d", message.chat.id)
 
                     if has_question:
                         inquiry = await ghost_repo.create_inquiry(

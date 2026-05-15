@@ -1,20 +1,15 @@
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime, timezone
 
-from beartype import beartype
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth import get_owner_id
-from bot.reminder_store import (
-    ActiveReminder,
-    delay_from_iso,
-    get_active,
-    remove_reminder,
-    schedule_reminder,
-)
+from api.dependencies import get_db
+from db.models import Task
+from db.repositories import tasks as task_repo
 
 router = APIRouter()
 
@@ -34,50 +29,69 @@ class ReminderCreate(BaseModel):
     lead_description: str | None = None
 
 
-def _reminder_id(text: str) -> str:
-    return hashlib.md5(text.encode()).hexdigest()[:8]
-
-
-def _to_out(r: ActiveReminder) -> ReminderOut:
+def _task_to_out(task_id: int, description: str, reminder_time: datetime | None, deadline: datetime | None) -> ReminderOut:
     return ReminderOut(
-        id=_reminder_id(r.reminder_text),
-        reminder_text=r.reminder_text,
-        reminder_time_iso=r.reminder_time_iso,
-        event_time_iso=r.event_time_iso,
-        lead_description=r.lead_description,
+        id=str(task_id),
+        reminder_text=description,
+        reminder_time_iso=reminder_time.isoformat() if reminder_time else "",
+        event_time_iso=deadline.isoformat() if deadline else None,
+        lead_description=None,
     )
 
 
 @router.get("", response_model=list[ReminderOut])
-async def list_reminders(owner_id: int = Depends(get_owner_id)) -> list[ReminderOut]:
-    return [_to_out(r) for r in get_active(owner_id)]
+async def list_reminders(
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> list[ReminderOut]:
+    tasks = await task_repo.get_open_tasks(session, owner_id, is_personal=True)
+    return [_task_to_out(t.id, t.description, t.reminder_time, t.deadline) for t in tasks if t.reminder_time]
 
 
 @router.post("", response_model=ReminderOut, status_code=201)
 async def create_reminder(
     body: ReminderCreate,
-    request: Request,
     owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
 ) -> ReminderOut:
-    bot = request.app.state.bot
-    reminder = ActiveReminder(
-        reminder_text=body.reminder_text,
-        reminder_time_iso=body.reminder_time_iso,
-        event_time_iso=body.event_time_iso,
-        lead_description=body.lead_description,
+    reminder_time: datetime | None = None
+    try:
+        reminder_time = datetime.fromisoformat(body.reminder_time_iso)
+        if reminder_time.tzinfo is None:
+            reminder_time = reminder_time.replace(tzinfo=timezone.utc)
+    except ValueError:
+        pass
+
+    deadline: datetime | None = None
+    if body.event_time_iso:
+        try:
+            deadline = datetime.fromisoformat(body.event_time_iso)
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+
+    task = await task_repo.create_personal_task(
+        session,
+        owner_id=owner_id,
+        description=body.reminder_text,
+        deadline=deadline,
+        reminder_time=reminder_time,
     )
-    delay = delay_from_iso(body.reminder_time_iso)
-    schedule_reminder(bot, owner_id, reminder, delay)
-    return _to_out(reminder)
+    return _task_to_out(task.id, task.description, task.reminder_time, task.deadline)
 
 
-@router.delete("/{hash_id}", status_code=204)
+@router.delete("/{reminder_id}", status_code=204)
 async def delete_reminder(
-    hash_id: str,
+    reminder_id: str,
     owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
 ) -> None:
-    active = get_active(owner_id)
-    target = next((r for r in active if _reminder_id(r.reminder_text) == hash_id), None)
-    if target is None:
+    try:
+        task_id = int(reminder_id)
+    except ValueError:
         raise HTTPException(status_code=404, detail="Reminder not found")
-    remove_reminder(owner_id, target)
+    task = await session.get(Task, task_id)
+    if task is None or task.owner_id != owner_id:
+        raise HTTPException(status_code=404, detail="Reminder not found")
+    await task_repo.delete_task(session, task_id)

@@ -13,15 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config_store import get_business_connection_id, get_language, get_timezone, set_timezone
 from bot.handlers.ghost import generate_digest_text
-from bot.reminder_store import (
-    ActiveReminder,
-    delay_from_iso,
-    get_active,
-    remove_reminder,
-    schedule_reminder,
-)
+from bot.reminder_store import delay_from_iso
 from config import settings
 from db.engine import get_session
+from db.models import Task, TaskStatus
 from db.repositories import contacts as contact_repo
 from db.repositories import ghost as ghost_repo
 from db.repositories import messages as msg_repo
@@ -100,46 +95,55 @@ def _format_time_local(iso: str | None, tz_name: str, lang: str) -> str:
         return iso or ""
 
 
-def _build_reminders_ctx(reminders: list[ActiveReminder], tz_name: str, lang: str) -> str:
+def _task_reminder_iso(task: Task) -> str | None:
+    return task.reminder_time.isoformat() if task.reminder_time else None
+
+
+def _task_deadline_iso(task: Task) -> str | None:
+    return task.deadline.isoformat() if task.deadline else None
+
+
+def _build_reminders_ctx(tasks: list[Task], tz_name: str, lang: str) -> str:
     lines: list[str] = []
-    for i, r in enumerate(reminders, 1):
-        time_str = _format_time_local(r.reminder_time_iso, tz_name, lang)
-        event_str = (f", event: {_format_time_local(r.event_time_iso, tz_name, lang)}"
-                     if r.event_time_iso else "")
-        lines.append(f"{i}. {r.reminder_text} — reminder at {time_str}{event_str}")
+    for i, t in enumerate(tasks, 1):
+        time_str = _format_time_local(_task_reminder_iso(t), tz_name, lang)
+        event_str = (
+            f", event: {_format_time_local(_task_deadline_iso(t), tz_name, lang)}"
+            if t.deadline else ""
+        )
+        lines.append(f"{i}. {t.description} — reminder at {time_str}{event_str}")
     return "\n".join(lines) if lines else "(none)"
 
 
-def _find_reminder_by_hint(reminders: list[ActiveReminder], hint: str | None) -> ActiveReminder | None:
-    if not hint or not reminders:
+def _find_task_by_hint(tasks: list[Task], hint: str | None) -> Task | None:
+    if not hint or not tasks:
         return None
     hint_lower = hint.lower()
-    for r in reminders:
-        if hint_lower in r.reminder_text.lower() or r.reminder_text.lower() in hint_lower:
-            return r
-    for r in reminders:
+    for t in tasks:
+        if hint_lower in t.description.lower() or t.description.lower() in hint_lower:
+            return t
+    for t in tasks:
         for word in hint_lower.split():
-            if len(word) > 2 and word in r.reminder_text.lower():
-                return r
-    return reminders[-1] if len(reminders) == 1 else None
+            if len(word) > 2 and word in t.description.lower():
+                return t
+    return tasks[-1] if len(tasks) == 1 else None
 
 
-def _find_matching_reminder(active: list[ActiveReminder], new_text: str) -> ActiveReminder | None:
+def _find_matching_task(tasks: list[Task], new_text: str) -> Task | None:
     new_lower = new_text.lower()
-    for r in active:
-        existing = r.reminder_text.lower()
+    for t in tasks:
+        existing = t.description.lower()
         if existing in new_lower or new_lower in existing:
-            return r
+            return t
         existing_words = {w for w in existing.split() if len(w) > 3}
         new_words = {w for w in new_lower.split() if len(w) > 3}
         if existing_words & new_words:
-            return r
-        # Stem match: handles Russian inflection (доктор / доктору / доктора)
+            return t
         for ew in existing_words:
             for nw in new_words:
                 stem = min(5, len(ew), len(nw))
                 if stem >= 4 and ew[:stem] == nw[:stem]:
-                    return r
+                    return t
     return None
 
 
@@ -271,69 +275,88 @@ async def _process_owner_text(
                 await message.answer(digest, parse_mode="HTML")
         return
 
-    # ── New or updated personal reminder ────────────────────────────────────
+    # ── New or updated personal reminder (DB-backed) ─────────────────────────
     if parsed.is_reminder and parsed.reminder_text:
         iso = parsed.reminder_time_iso or parsed.scheduled_at_iso
-        d = delay_from_iso(iso)
 
-        active = get_active(owner_id)
-        existing = _find_matching_reminder(active, parsed.reminder_text)
+        # Parse reminder_time and deadline (event_time)
+        reminder_time: datetime | None = None
+        if iso:
+            try:
+                reminder_time = datetime.fromisoformat(iso)
+                if reminder_time.tzinfo is None:
+                    reminder_time = reminder_time.replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
 
-        # No direct text match but reminders exist → ask parse_reminder_action
-        # whether this is actually a reschedule of an existing one (e.g.
-        # "доктора перенесли с 20 на 18" doesn't share words with
-        # "пойти к доктору в 20:00 сегодня", but the action model has context)
-        if existing is None and active:
-            ctx = _build_reminders_ctx(active, tz_name, lang)
+        deadline: datetime | None = None
+        if parsed.event_time_iso:
+            try:
+                deadline = datetime.fromisoformat(parsed.event_time_iso)
+                if deadline.tzinfo is None:
+                    deadline = deadline.replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+
+        active_tasks = await task_repo.get_open_tasks(session, owner_id, is_personal=True)
+        existing_task = _find_matching_task(active_tasks, parsed.reminder_text)
+
+        # No direct text match but tasks exist → check if it's a reschedule
+        if existing_task is None and active_tasks:
+            ctx = _build_reminders_ctx(active_tasks, tz_name, lang)
             try:
                 action = await parse_reminder_action(text, ctx, language=lang, tz_name=tz_name)
             except Exception:
                 action = None
             if action and action.action == "adjust_time" and action.new_reminder_time_iso:
-                target = _find_reminder_by_hint(active, action.reminder_hint)
+                target = _find_task_by_hint(active_tasks, action.reminder_hint)
                 if target:
-                    remove_reminder(owner_id, target)
-                    adj_d = delay_from_iso(action.new_reminder_time_iso)
-                    new_text = _replace_event_time(
-                        target.reminder_text,
-                        old_iso=target.event_time_iso,
+                    new_reminder_time: datetime | None = None
+                    try:
+                        new_reminder_time = datetime.fromisoformat(action.new_reminder_time_iso)
+                        if new_reminder_time.tzinfo is None:
+                            new_reminder_time = new_reminder_time.replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        pass
+                    new_desc = _replace_event_time(
+                        target.description,
+                        old_iso=_task_deadline_iso(target),
                         new_iso=parsed.event_time_iso,
                         tz_name=tz_name,
                     )
-                    new_r = ActiveReminder(
-                        reminder_text=new_text,
-                        reminder_time_iso=action.new_reminder_time_iso,
-                        event_time_iso=parsed.event_time_iso or target.event_time_iso,
-                        lead_description=action.lead_description,
-                    )
-                    schedule_reminder(bot, owner_id, new_r, adj_d)
+                    target.description = new_desc
+                    await task_repo.set_reminder(session, target.id, new_reminder_time)
                     time_str = _format_time_local(action.new_reminder_time_iso, tz_name, lang)
                     if action.lead_description:
-                        confirm = f"✅ Перенёс {action.lead_description}: {new_text} ({time_str})"
+                        confirm = f"✅ Перенёс {action.lead_description}: {new_desc} ({time_str})"
                     else:
-                        confirm = f"✅ Перенёс на {time_str}: {new_text}"
+                        confirm = f"✅ Перенёс на {time_str}: {new_desc}"
                     await message.answer(confirm)
                     return
 
-        is_update = existing is not None
-        if is_update and existing:
-            remove_reminder(owner_id, existing)
-
-        reminder_text = existing.reminder_text if (is_update and existing) else parsed.reminder_text
-        if is_update and existing:
-            reminder_text = _replace_event_time(
-                reminder_text,
-                old_iso=existing.event_time_iso,
+        is_update = existing_task is not None
+        if is_update and existing_task is not None:
+            # Update existing task description and reminder_time
+            new_desc = _replace_event_time(
+                existing_task.description,
+                old_iso=_task_deadline_iso(existing_task),
                 new_iso=parsed.event_time_iso,
                 tz_name=tz_name,
             )
-        reminder = ActiveReminder(
-            reminder_text=reminder_text,
-            reminder_time_iso=iso or "",
-            event_time_iso=parsed.event_time_iso,
-            lead_description=parsed.lead_description,
-        )
-        schedule_reminder(bot, owner_id, reminder, d)
+            existing_task.description = new_desc
+            if deadline is not None:
+                existing_task.deadline = deadline
+            await task_repo.set_reminder(session, existing_task.id, reminder_time)
+            reminder_text = new_desc
+        else:
+            new_task = await task_repo.create_personal_task(
+                session,
+                owner_id=owner_id,
+                description=parsed.reminder_text,
+                deadline=deadline,
+                reminder_time=reminder_time,
+            )
+            reminder_text = new_task.description
 
         time_str = _format_time_local(iso, tz_name, lang) if iso else ""
         verb = "Обновил" if is_update else "Напомню"
@@ -381,10 +404,10 @@ async def _process_owner_text(
                 display_name = contact.saved_name or contact.name or recipient_name
 
                 if parsed.literal_message:
-                    text = parsed.literal_message
+                    send_text = parsed.literal_message
                 else:
                     try:
-                        text = await generate_dispatch_message(
+                        send_text = await generate_dispatch_message(
                             intent=parsed.message_intent,  # type: ignore[arg-type]
                             recipient_name=display_name,
                             language=lang,
@@ -392,26 +415,25 @@ async def _process_owner_text(
                         )
                     except Exception:
                         logger.exception("Failed to generate dispatch message for %s", display_name)
-                        text = parsed.message_intent or ""
+                        send_text = parsed.message_intent or ""
 
-                _fire(_delayed_send(bot, chat_id, text, bcid, dispatch_delay))
+                _fire(_delayed_send(bot, chat_id, send_text, bcid, dispatch_delay))
                 if dispatch_delay > 0:
                     sent_to.append(f"{display_name} ({_format_delay(dispatch_delay, lang)})")
                 else:
                     sent_to.append(display_name)
 
-                # Extract task from the original owner text (e.g. voice command)
                 try:
                     extracted = await extract_task_from_message(
                         original_text, language=lang, tz_name=tz_name
                     )
                     if extracted.has_task and extracted.description:
-                        deadline: datetime | None = None
+                        task_deadline: datetime | None = None
                         if extracted.deadline_iso:
                             try:
-                                deadline = datetime.fromisoformat(extracted.deadline_iso)
-                                if deadline.tzinfo is None:
-                                    deadline = deadline.replace(tzinfo=timezone.utc)
+                                task_deadline = datetime.fromisoformat(extracted.deadline_iso)
+                                if task_deadline.tzinfo is None:
+                                    task_deadline = task_deadline.replace(tzinfo=timezone.utc)
                             except ValueError:
                                 pass
                         await task_repo.create_task(
@@ -423,7 +445,7 @@ async def _process_owner_text(
                             assignee_name=display_name,
                             assignee_user_id=contact.user_id,
                             assignee_username=contact.username,
-                            deadline=deadline,
+                            deadline=task_deadline,
                         )
                 except Exception:
                     logger.exception("Task extraction after dispatch failed for %s", display_name)
@@ -445,40 +467,37 @@ async def _process_owner_text(
                 await message.answer("\n".join(lines))
             return
 
-    # ── Reminder action (adjust time / delete) ───────────────────────────────
-    active = get_active(owner_id)
-    if active:
-        ctx = _build_reminders_ctx(active, tz_name, lang)
+    # ── Reminder action (adjust time / delete) against DB tasks ─────────────
+    active_tasks = await task_repo.get_open_tasks(session, owner_id, is_personal=True)
+    if active_tasks:
+        ctx = _build_reminders_ctx(active_tasks, tz_name, lang)
         action = await parse_reminder_action(text, ctx, language=lang, tz_name=tz_name)
 
         if action.action == "delete":
-            target = _find_reminder_by_hint(active, action.reminder_hint)
+            target = _find_task_by_hint(active_tasks, action.reminder_hint)
             if target:
-                remove_reminder(owner_id, target)
-                await message.answer(f"🗑 Напоминание «{target.reminder_text}» удалено.")
+                await task_repo.delete_task(session, target.id)
+                await message.answer(f"🗑 Напоминание «{target.description}» удалено.")
             else:
                 await message.answer("Не нашёл такое напоминание. Используйте /reminders чтобы увидеть список.")
             return
 
         if action.action == "adjust_time" and action.new_reminder_time_iso:
-            target = _find_reminder_by_hint(active, action.reminder_hint)
+            target = _find_task_by_hint(active_tasks, action.reminder_hint)
             if target:
-                remove_reminder(owner_id, target)
-
-                d = delay_from_iso(action.new_reminder_time_iso)
-                new_reminder = ActiveReminder(
-                    reminder_text=target.reminder_text,
-                    reminder_time_iso=action.new_reminder_time_iso,
-                    event_time_iso=target.event_time_iso,
-                    lead_description=action.lead_description,
-                )
-                schedule_reminder(bot, owner_id, new_reminder, d)
-
+                new_reminder_time2: datetime | None = None
+                try:
+                    new_reminder_time2 = datetime.fromisoformat(action.new_reminder_time_iso)
+                    if new_reminder_time2.tzinfo is None:
+                        new_reminder_time2 = new_reminder_time2.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    pass
+                await task_repo.set_reminder(session, target.id, new_reminder_time2)
                 time_str = _format_time_local(action.new_reminder_time_iso, tz_name, lang)
                 if action.lead_description:
-                    confirm = f"✅ Напомню {action.lead_description}: {target.reminder_text} ({time_str})"
+                    confirm = f"✅ Напомню {action.lead_description}: {target.description} ({time_str})"
                 else:
-                    confirm = f"✅ Напомню в {time_str}: {target.reminder_text}"
+                    confirm = f"✅ Напомню в {time_str}: {target.description}"
                 await message.answer(confirm)
             else:
                 await message.answer("Не нашёл такое напоминание. Используйте /reminders чтобы увидеть список.")
@@ -535,20 +554,20 @@ async def handle_owner_voice(message: Message, bot: Bot, session: AsyncSession) 
     await _process_owner_text(text, message, bot, session)
 
 
-async def cmd_reminders(message: Message) -> None:
-    """Called from commands router — lists active reminders for the owner."""
+async def cmd_reminders(message: Message, session: AsyncSession) -> None:
+    """Called from commands router — lists active personal tasks/reminders for the owner."""
     if message.from_user is None or message.from_user.id != settings.owner_chat_id:
         return
     owner_id = message.from_user.id
     tz_name = get_timezone()
     lang = get_language()
-    active = get_active(owner_id)
+    active = await task_repo.get_open_tasks(session, owner_id, is_personal=True)
     if not active:
         await message.answer("Активных напоминаний нет.")
         return
     lines = ["⏰ <b>Активные напоминания:</b>"]
-    for i, r in enumerate(active, 1):
-        time_str = _format_time_local(r.reminder_time_iso, tz_name, lang)
-        lines.append(f"{i}. {r.reminder_text}" + (f" — {time_str}" if time_str else ""))
+    for i, t in enumerate(active, 1):
+        time_str = _format_time_local(_task_reminder_iso(t), tz_name, lang)
+        lines.append(f"{i}. {t.description}" + (f" — {time_str}" if time_str else ""))
     lines.append("\nЧтобы изменить или удалить — напишите, например: «удали напоминание про стрижку» или «перенеси встречу на 8 утра».")
     await message.answer("\n".join(lines), parse_mode="HTML")

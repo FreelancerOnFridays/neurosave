@@ -8,8 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth import get_owner_id
 from api.dependencies import get_db
+from bot.config_store import get_language
 from db.models import InquiryCategory
 from db.repositories import ghost as ghost_repo
+from services.ai import generate_away_message
 
 router = APIRouter()
 
@@ -18,11 +20,17 @@ class GhostStatusOut(BaseModel):
     is_active: bool
     away_message: str | None
     activated_at: datetime | None
+    silent_mode: bool
 
 
 class GhostUpdate(BaseModel):
     is_active: bool
     away_message: str | None = None
+    silent_mode: bool = False
+
+
+class GhostSilentUpdate(BaseModel):
+    silent_mode: bool
 
 
 class InquiryOut(BaseModel):
@@ -37,6 +45,10 @@ class InquiryOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class GenerateReplyOut(BaseModel):
+    text: str
+
+
 @router.get("", response_model=GhostStatusOut)
 async def get_ghost(
     owner_id: int = Depends(get_owner_id),
@@ -44,11 +56,14 @@ async def get_ghost(
 ) -> GhostStatusOut:
     gs = await ghost_repo.get_session(session, owner_id)
     if gs is None:
-        return GhostStatusOut(is_active=False, away_message=None, activated_at=None)
+        return GhostStatusOut(
+            is_active=False, away_message=None, activated_at=None, silent_mode=False
+        )
     return GhostStatusOut(
         is_active=gs.is_active,
         away_message=gs.away_message,
         activated_at=gs.activated_at,
+        silent_mode=gs.silent_mode,
     )
 
 
@@ -63,12 +78,40 @@ async def update_ghost(
         owner_id=owner_id,
         active=body.is_active,
         away_message=body.away_message,
+        silent_mode=body.silent_mode,
     )
     return GhostStatusOut(
         is_active=gs.is_active,
         away_message=gs.away_message,
         activated_at=gs.activated_at,
+        silent_mode=gs.silent_mode,
     )
+
+
+@router.patch("/silent", response_model=GhostStatusOut)
+async def update_silent_mode(
+    body: GhostSilentUpdate,
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> GhostStatusOut:
+    gs = await ghost_repo.set_silent_mode(session, owner_id, body.silent_mode)
+    if gs is None:
+        raise HTTPException(status_code=404, detail="No ghost session found")
+    return GhostStatusOut(
+        is_active=gs.is_active,
+        away_message=gs.away_message,
+        activated_at=gs.activated_at,
+        silent_mode=gs.silent_mode,
+    )
+
+
+@router.post("/generate-reply", response_model=GenerateReplyOut)
+async def generate_reply(
+    owner_id: int = Depends(get_owner_id),
+) -> GenerateReplyOut:
+    lang = get_language()
+    text = await generate_away_message(lang)
+    return GenerateReplyOut(text=text)
 
 
 @router.get("/inquiries", response_model=list[InquiryOut])

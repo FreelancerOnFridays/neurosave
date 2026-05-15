@@ -15,6 +15,30 @@
   --color-spam: #8e8e93;
 }
 
+/* Dark theme override — applied when data-theme="dark" is set on <html> */
+[data-theme="dark"] {
+  --tg-theme-bg-color: #1c1c1e;
+  --tg-theme-secondary-bg-color: #2c2c2e;
+  --tg-theme-text-color: #ffffff;
+  --tg-theme-hint-color: #8e8e93;
+  --tg-theme-link-color: #0a84ff;
+  --tg-theme-button-color: #0a84ff;
+  --tg-theme-button-text-color: #ffffff;
+  --tg-theme-destructive-text-color: #ff453a;
+}
+
+/* Light theme override */
+[data-theme="light"] {
+  --tg-theme-bg-color: #ffffff;
+  --tg-theme-secondary-bg-color: #f2f2f7;
+  --tg-theme-text-color: #000000;
+  --tg-theme-hint-color: #8e8e93;
+  --tg-theme-link-color: #007aff;
+  --tg-theme-button-color: #007aff;
+  --tg-theme-button-text-color: #ffffff;
+  --tg-theme-destructive-text-color: #ff3b30;
+}
+
 body {
   background-color: var(--tg-theme-bg-color, #ffffff);
   color: var(--tg-theme-text-color, #000000);

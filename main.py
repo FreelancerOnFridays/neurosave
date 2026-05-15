@@ -16,7 +16,7 @@ from api.app import create_app
 from bot.handlers import business_messages, callbacks, commands, direct_messages, ghost
 from bot.middlewares.db_session import DbSessionMiddleware
 from config import settings
-from workers import deadline_reminder, morning_brief
+from workers import deadline_reminder, morning_brief, reminder_worker
 from workers.broker import broker
 
 logging.basicConfig(level=logging.INFO)
@@ -63,6 +63,7 @@ async def main() -> None:
         dp.start_polling(bot, allowed_updates=_ALLOWED_UPDATES),
         deadline_reminder.run_loop(bot),
         morning_brief.run_loop(bot),
+        reminder_worker.run_loop(bot),
         server.serve(),
     )
 

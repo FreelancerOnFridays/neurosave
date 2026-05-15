@@ -23,6 +23,7 @@ async def set_active(
     owner_id: int,
     active: bool,
     away_message: str | None = None,
+    silent_mode: bool | None = None,
 ) -> GhostSession:
     existing = await get_session(session, owner_id)
     if existing is None:
@@ -31,6 +32,7 @@ async def set_active(
             is_active=active,
             away_message=away_message,
             activated_at=datetime.now(timezone.utc) if active else None,
+            silent_mode=silent_mode if silent_mode is not None else False,
         )
         session.add(gs)
         await session.flush()
@@ -39,9 +41,22 @@ async def set_active(
     existing.is_active = active
     if away_message is not None:
         existing.away_message = away_message
-    if active and not was_active:
+    if silent_mode is not None:
+        existing.silent_mode = silent_mode
+    if active and (not was_active or existing.activated_at is None):
         existing.activated_at = datetime.now(timezone.utc)
     return existing
+
+
+@beartype
+async def set_silent_mode(
+    session: AsyncSession, owner_id: int, silent: bool
+) -> GhostSession | None:
+    gs = await get_session(session, owner_id)
+    if gs is None:
+        return None
+    gs.silent_mode = silent
+    return gs
 
 
 @beartype

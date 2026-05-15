@@ -64,6 +64,14 @@ With a recent Telegram update, it is now possible to grant bots access to chats 
 Technology stack:
 Python, Aiogram 3, PostgreSQL + pgvector, Taskiq Redis, for Mini App NextJS+Tailwind
 
+External integrations (Phase 9+):
+- Google Calendar API (`google-auth-oauthlib`, `google-api-python-client`)
+- Notion API (`notion-client`)
+- Gmail API (OAuth 2.0, `gmail.send` + `gmail.readonly` scopes)
+- CRM: AmoCRM, Bitrix24 (pluggable adapter pattern in `services/crm/`)
+- Telegram folder sync: Telethon MTProto userbot (separate from aiogram bot)
+- OAuth tokens stored in `oauth_tokens` table; configs in `integration_configs` table
+
 
 1. Task Manager (Task Tracking)
 A module for automatically identifying and tracking tasks from current conversations.
@@ -120,7 +128,7 @@ For example, you can tell the assistant, “Remind me that I have a haircut at 6
 
 ---
 
-## Development Status (updated 2026-05-14)
+## Development Status (updated 2026-05-15)
 
 ### ✅ Complete
 - **Phase 1** — Foundation: bot skeleton, DB models, middleware, config, migrations
@@ -128,15 +136,27 @@ For example, you can tell the assistant, “Remind me that I have a haircut at 6
 - **Phase 2** — Dispatch & Scheduling: owner sends messages to contacts by name, scheduled sends (“in 10 minutes”), contact aliases (`saved_name`), `has_business_chat` guard
 - **Phase 2 Polish** — Style Profiling: `extract_style_profile` + `get_style_profile` (1h cache) injected into `generate_dispatch_message` and `generate_nudge_message`
 - **Dispatch AI fix** — `literal_message` passthrough in `direct_messages.py`
-- **Phase 6** — Personal reminders: `reminder_store.py`, schedule/adjust/delete, context-based reminder from business chat
-- **Phase 3** — Ghost Mode: auto-responder, `classify_inquiry`, VIP bypass, AI summaries, digest
+- **Phase 6** — Personal reminders: DB-backed tasks with `reminder_time`, polling worker `workers/reminder_worker.py`
+- **Phase 3** — Ghost Mode: auto-responder, `classify_inquiry`, VIP bypass, AI summaries, digest, silent mode
 - **Phase 4** — Instant Context / RAG: `embed_text`, `search_similar`, `answer_from_context`, `/ask`
-- **Phase 5** — Morning Coffee Brief: `workers/morning_brief.py`, hot tasks + overdue + night digest + reminders + AI agenda; `/brief [HH:MM|on|off]`
+- **Phase 5** — Morning Coffee Brief: `workers/morning_brief.py`, hot tasks + overdue + night digest + reminders + AI agenda
+- **Phase 8** — Mini-App: NextJS + Tailwind Telegram Mini App with Today/Tasks/Ghost/Settings tabs, Framer Motion animations, swipe actions, theme sync, SegmentedControl, FilterBar, TimePickerSheet, InfoTooltip; OAuth-ready API layer
 
-### 🔜 Next
-- **Voice messages (Phase 6 voice)** — Whisper transcription, process voice note as text command
-- **Daily schedule (Phase 7)** — morning schedule from reminders, editable via chat
-- **Mini-app (Phase 8)** — NextJS + Tailwind Telegram Mini App
+### 🔜 Planned — Phase 9: External Integrations
+- **OAuth infrastructure** — `oauth_tokens` + `integration_configs` tables, `/api/integrations/` router, token refresh worker
+- **Google Calendar** — OAuth 2.0, task deadline → calendar event sync, “schedule a call” AI command
+- **Notion** — personal token or OAuth, task → Notion DB page sync, meeting notes page
+- **CRM** — pluggable adapters: AmoCRM (RU market), Bitrix24, HubSpot; Sales inquiry → one-tap CRM lead
+- **Gmail** — OAuth, “send email to X with file Y” command, attachment from TG file
+- **Telegram folder sync** — Telethon MTProto userbot, `/sync_folder <name>` → import team contacts
+- **Integrations UI** — new section in mini-app Settings, IntegrationCard components, OAuth redirect flow
+
+### 🔜 Planned — Phase 10: Intelligence Features
+- **Meeting Notes Assistant** — voice after meeting → transcribe → extract tasks + Notion page
+- **Weekly Report** — Sunday digest: tasks done, overdue, ghost stats, new contacts
+- **Document AI** — forward PDF/DOCX → extract dates, obligations, create tasks
+- **Contact Intelligence** — `/about Дима` → AI summary of contact history, open tasks, recent topics
+- **Smart Priority Inbox** — learn which contacts are always urgent, quiet push during ghost mode
 
 ---
 

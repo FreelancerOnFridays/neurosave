@@ -22,17 +22,26 @@ export function useGhost() {
     refreshInterval: 15_000,
   });
 
+  const defaultStatus: GhostStatus = {
+    is_active: false,
+    away_message: null,
+    activated_at: null,
+    silent_mode: false,
+  };
+
   const toggle = async (active: boolean, awayMessage?: string | null) => {
     const optimistic: GhostStatus = {
       is_active: active,
       away_message: awayMessage ?? status?.away_message ?? null,
       activated_at: active ? new Date().toISOString() : null,
+      silent_mode: status?.silent_mode ?? false,
     };
     await mutateStatus(
       async () => {
         const updated = await api.ghost.update({
           is_active: active,
           away_message: awayMessage,
+          silent_mode: status?.silent_mode ?? false,
         });
         return updated;
       },
@@ -43,16 +52,36 @@ export function useGhost() {
 
   const saveAwayMessage = async (msg: string) => {
     if (!status) return;
-    await api.ghost.update({ is_active: status.is_active, away_message: msg });
+    await api.ghost.update({
+      is_active: status.is_active,
+      away_message: msg,
+      silent_mode: status.silent_mode,
+    });
     await mutateStatus();
   };
 
+  const setSilentMode = async (silent: boolean) => {
+    if (!status) {
+      await api.ghost.update({ is_active: false, silent_mode: silent });
+    } else {
+      await api.ghost.setSilent(silent);
+    }
+    await mutateStatus();
+  };
+
+  const generateReply = async (): Promise<string> => {
+    const res = await api.ghost.generateReply();
+    return res.text;
+  };
+
   return {
-    status: status ?? { is_active: false, away_message: null, activated_at: null },
+    status: status ?? defaultStatus,
     inquiries: inquiries ?? [],
     isLoading: statusLoading || inquiriesLoading,
     error: statusError as Error | undefined,
     toggle,
     saveAwayMessage,
+    setSilentMode,
+    generateReply,
   };
 }

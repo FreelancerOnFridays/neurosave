@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 
 from aiogram import Bot, F, Router
@@ -8,7 +7,6 @@ from aiogram.types import CallbackQuery, Message as TgMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config_store import get_language, set_language, t
-from bot.reminder_store import get_active, remove_reminder
 from bot.schedule import build_today_schedule
 from config import settings
 from db.repositories import messages as msg_repo
@@ -111,29 +109,30 @@ async def handle_lang_select(query: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("sched_done:"))
-async def handle_sched_done(query: CallbackQuery) -> None:
+async def handle_sched_done(
+    query: CallbackQuery, session: AsyncSession
+) -> None:
     if query.from_user.id != settings.owner_chat_id or query.data is None:
         await query.answer()
         return
-    h = query.data.split(":")[1]
+    task_id_str = query.data.split(":")[1]
     owner_id = settings.owner_chat_id
-    target = next(
-        (r for r in get_active(owner_id)
-         if hashlib.md5(r.reminder_text.encode()).hexdigest()[:8] == h),
-        None,
-    )
-    if target:
-        remove_reminder(owner_id, target)
-        await query.answer("✅ Готово!")
-    else:
+    try:
+        task_id = int(task_id_str)
+        task = await task_repo.mark_task_done(session, task_id)
+        if task:
+            await query.answer("✅ Готово!")
+        else:
+            await query.answer("Уже выполнено")
+    except (ValueError, Exception):
         await query.answer("Уже выполнено")
 
-    text, markup = build_today_schedule(owner_id)
+    text, markup = await build_today_schedule(owner_id, session)
     if isinstance(query.message, TgMessage):
         try:
             await query.message.edit_text(text, parse_mode="HTML", reply_markup=markup)
         except Exception:
-            pass  # nothing left to edit (empty schedule edits to same text)
+            pass
 
 
 @router.callback_query()

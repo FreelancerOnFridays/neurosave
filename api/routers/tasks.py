@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import Date, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth import get_owner_id
@@ -26,6 +26,8 @@ class TaskOut(BaseModel):
     assignee_user_id: int | None
     assignee_username: str | None
     deadline: datetime | None
+    reminder_time: datetime | None
+    is_personal: bool
     status: str
     created_at: datetime
     chat_id: int
@@ -37,18 +39,58 @@ class TaskStatusUpdate(BaseModel):
     status: TaskStatus
 
 
+class TaskCreate(BaseModel):
+    description: str
+    deadline: datetime | None = None
+    reminder_time: datetime | None = None
+
+
+class TaskReminderUpdate(BaseModel):
+    reminder_time: datetime | None
+
+
 @router.get("", response_model=list[TaskOut])
 async def list_tasks(
     owner_id: int = Depends(get_owner_id),
     session: AsyncSession = Depends(get_db),
+    type: str | None = Query(default=None),
+    has_reminder: bool | None = Query(default=None),
+    filter_date: date | None = Query(default=None, alias="date"),
 ) -> list[TaskOut]:
-    result = await session.execute(
+    q = (
         select(Task)
         .where(Task.owner_id == owner_id)
         .order_by(Task.deadline.asc().nulls_last(), Task.created_at.asc())
     )
+    if type == "personal":
+        q = q.where(Task.is_personal == True)  # noqa: E712
+    elif type == "delegated":
+        q = q.where(Task.is_personal == False)  # noqa: E712
+    if has_reminder is True:
+        q = q.where(Task.reminder_time.isnot(None))
+    elif has_reminder is False:
+        q = q.where(Task.reminder_time.is_(None))
+    if filter_date is not None:
+        q = q.where(cast(Task.deadline, Date) == filter_date)
+    result = await session.execute(q)
     tasks = list(result.scalars().all())
     return [TaskOut.model_validate(t) for t in tasks]
+
+
+@router.post("", response_model=TaskOut, status_code=201)
+async def create_task(
+    body: TaskCreate,
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> TaskOut:
+    task = await task_repo.create_personal_task(
+        session,
+        owner_id=owner_id,
+        description=body.description,
+        deadline=body.deadline,
+        reminder_time=body.reminder_time,
+    )
+    return TaskOut.model_validate(task)
 
 
 @router.patch("/{task_id}/status", response_model=TaskOut)
@@ -64,6 +106,50 @@ async def update_task_status(
     task.status = body.status
     await session.flush()
     return TaskOut.model_validate(task)
+
+
+@router.patch("/{task_id}/reminder", response_model=TaskOut)
+async def update_task_reminder(
+    task_id: int,
+    body: TaskReminderUpdate,
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> TaskOut:
+    task = await session.get(Task, task_id)
+    if task is None or task.owner_id != owner_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+    updated = await task_repo.set_reminder(session, task_id, body.reminder_time)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return TaskOut.model_validate(updated)
+
+
+@router.delete("/{task_id}/reminder", response_model=TaskOut)
+async def delete_task_reminder(
+    task_id: int,
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> TaskOut:
+    task = await session.get(Task, task_id)
+    if task is None or task.owner_id != owner_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+    updated = await task_repo.set_reminder(session, task_id, None)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return TaskOut.model_validate(updated)
+
+
+@router.delete("/{task_id}", status_code=204)
+async def delete_task(
+    task_id: int,
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> None:
+    task = await session.get(Task, task_id)
+    if task is None or task.owner_id != owner_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+    await session.delete(task)
+    await session.flush()
 
 
 @router.post("/{task_id}/nudge", status_code=204)

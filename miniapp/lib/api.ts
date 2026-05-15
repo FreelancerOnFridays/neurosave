@@ -2,14 +2,10 @@ import type {
   AppSettings,
   GhostStatus,
   Inquiry,
-  Reminder,
-  ReminderCreate,
   Task,
   TaskStatus,
 } from "./types";
 
-// Always use relative URLs in the browser — Next.js rewrites proxy /api/* to the backend.
-// The NEXT_PUBLIC_API_URL env var is consumed by next.config.ts rewrites, not here.
 const BASE_URL = "";
 
 let _initData = "";
@@ -36,33 +32,48 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  reminders: {
-    list: () => request<Reminder[]>("/api/reminders"),
-    create: (body: ReminderCreate) =>
-      request<Reminder>("/api/reminders", {
-        method: "POST",
-        body: JSON.stringify(body),
-      }),
-    delete: (id: string) =>
-      request<void>(`/api/reminders/${id}`, { method: "DELETE" }),
-  },
   tasks: {
-    list: () => request<Task[]>("/api/tasks"),
+    list: (params?: { type?: string; has_reminder?: boolean; date?: string }) => {
+      const q = new URLSearchParams();
+      if (params?.type) q.set("type", params.type);
+      if (params?.has_reminder !== undefined) q.set("has_reminder", String(params.has_reminder));
+      if (params?.date) q.set("date", params.date);
+      const qs = q.toString();
+      return request<Task[]>(`/api/tasks${qs ? `?${qs}` : ""}`);
+    },
+    create: (body: { description: string; deadline?: string | null; reminder_time?: string | null }) =>
+      request<Task>("/api/tasks", { method: "POST", body: JSON.stringify(body) }),
     updateStatus: (id: number, status: TaskStatus) =>
       request<Task>(`/api/tasks/${id}/status`, {
         method: "PATCH",
         body: JSON.stringify({ status }),
       }),
+    setReminder: (id: number, reminder_time: string | null) =>
+      request<Task>(`/api/tasks/${id}/reminder`, {
+        method: "PATCH",
+        body: JSON.stringify({ reminder_time }),
+      }),
+    deleteReminder: (id: number) =>
+      request<Task>(`/api/tasks/${id}/reminder`, { method: "DELETE" }),
+    delete: (id: number) =>
+      request<void>(`/api/tasks/${id}`, { method: "DELETE" }),
     nudge: (id: number) =>
       request<void>(`/api/tasks/${id}/nudge`, { method: "POST" }),
   },
   ghost: {
     status: () => request<GhostStatus>("/api/ghost"),
-    update: (body: { is_active: boolean; away_message?: string | null }) =>
+    update: (body: { is_active: boolean; away_message?: string | null; silent_mode?: boolean }) =>
       request<GhostStatus>("/api/ghost", {
         method: "PUT",
         body: JSON.stringify(body),
       }),
+    setSilent: (silent_mode: boolean) =>
+      request<GhostStatus>("/api/ghost/silent", {
+        method: "PATCH",
+        body: JSON.stringify({ silent_mode }),
+      }),
+    generateReply: () =>
+      request<{ text: string }>("/api/ghost/generate-reply", { method: "POST" }),
     inquiries: () => request<Inquiry[]>("/api/ghost/inquiries"),
   },
   settings: {

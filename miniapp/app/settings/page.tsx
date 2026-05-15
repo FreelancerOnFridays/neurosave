@@ -3,6 +3,7 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { LanguageSelect } from "@/components/settings/LanguageSelect";
 import { TimezoneSelect } from "@/components/settings/TimezoneSelect";
+import { ThemeSelect } from "@/components/settings/ThemeSelect";
 import { SettingsRow } from "@/components/settings/SettingsRow";
 import { Toggle } from "@/components/ui/Toggle";
 import { Spinner } from "@/components/ui/Spinner";
@@ -10,6 +11,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Card } from "@/components/ui/Card";
 import { useSettings } from "@/hooks/useSettings";
 import { useLang } from "@/contexts/LanguageContext";
+import type { Theme } from "@/lib/types";
 
 export default function SettingsPage() {
   const { settings, isLoading, error, update } = useSettings();
@@ -56,6 +58,14 @@ export default function SettingsPage() {
             onChange={(v) => update({ brief_enabled: v })}
           />
         </SettingsRow>
+
+        <div className="py-3">
+          <p className="text-sm font-medium text-tg-text">{t("settings_theme")}</p>
+          <ThemeSelect
+            value={(settings.theme as Theme) ?? "auto"}
+            onChange={(v) => update({ theme: v })}
+          />
+        </div>
       </Card>
     </div>
   );

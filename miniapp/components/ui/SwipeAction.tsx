@@ -1,80 +1,96 @@
 "use client";
 
 import { type ReactNode, useRef, useState } from "react";
+import { motion, useMotionValue, useTransform, animate } from "framer-motion";
+
+export interface SwipeActionItem {
+  label: string;
+  color: string;
+  textColor?: string;
+  onClick: () => void;
+}
 
 interface SwipeActionProps {
   children: ReactNode;
-  onDelete: () => void;
-  label?: string;
+  actions: SwipeActionItem[];
 }
 
-const THRESHOLD = 80;
+const ACTION_WIDTH = 72;
 
-export function SwipeAction({
-  children,
-  onDelete,
-  label = "Удалить",
-}: SwipeActionProps) {
-  const [offset, setOffset] = useState(0);
-  const [swiped, setSwiped] = useState(false);
+export function SwipeAction({ children, actions }: SwipeActionProps) {
+  const totalWidth = actions.length * ACTION_WIDTH;
+  const x = useMotionValue(0);
+  const [revealed, setRevealed] = useState(false);
   const startX = useRef<number | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const isDragging = useRef(false);
 
-  const onPointerDown = (e: React.PointerEvent) => {
+  const handlePointerDown = (e: React.PointerEvent) => {
     startX.current = e.clientX;
-    containerRef.current?.setPointerCapture(e.pointerId);
+    isDragging.current = false;
   };
 
-  const onPointerMove = (e: React.PointerEvent) => {
+  const handlePointerMove = (e: React.PointerEvent) => {
     if (startX.current === null) return;
     const dx = e.clientX - startX.current;
-    if (dx < 0) setOffset(Math.max(dx, -THRESHOLD - 20));
+    if (Math.abs(dx) > 4) isDragging.current = true;
+    if (dx < 0) {
+      x.set(Math.max(dx, -totalWidth - 20));
+    } else if (revealed) {
+      x.set(Math.min(dx - totalWidth, 0));
+    }
   };
 
-  const onPointerUp = () => {
-    if (offset < -THRESHOLD) {
-      setSwiped(true);
-      setOffset(-THRESHOLD);
+  const handlePointerUp = () => {
+    if (!isDragging.current) {
+      startX.current = null;
+      return;
+    }
+    const current = x.get();
+    if (current < -totalWidth / 2) {
+      animate(x, -totalWidth, { type: "spring", stiffness: 400, damping: 30 });
+      setRevealed(true);
     } else {
-      setSwiped(false);
-      setOffset(0);
+      animate(x, 0, { type: "spring", stiffness: 400, damping: 30 });
+      setRevealed(false);
     }
     startX.current = null;
   };
 
-  const handleDelete = () => {
-    setOffset(0);
-    setSwiped(false);
-    onDelete();
+  const close = () => {
+    animate(x, 0, { type: "spring", stiffness: 400, damping: 30 });
+    setRevealed(false);
   };
 
   return (
     <div className="relative overflow-hidden rounded-2xl">
+      {/* Action buttons revealed on swipe-left */}
       <div
-        className="absolute inset-y-0 right-0 flex items-center justify-end px-4 bg-tg-destructive rounded-2xl"
-        style={{ minWidth: THRESHOLD }}
+        className="absolute inset-y-0 right-0 flex"
+        style={{ width: totalWidth }}
       >
-        <button
-          onClick={handleDelete}
-          className="text-white text-sm font-medium"
-        >
-          {label}
-        </button>
+        {actions.map((action, i) => (
+          <button
+            key={i}
+            onClick={() => { close(); action.onClick(); }}
+            className="flex-1 flex flex-col items-center justify-center text-xs font-semibold gap-1"
+            style={{ backgroundColor: action.color, color: action.textColor ?? "#fff" }}
+          >
+            {action.label}
+          </button>
+        ))}
       </div>
-      <div
-        ref={containerRef}
-        style={{
-          transform: `translateX(${offset}px)`,
-          transition: startX.current === null ? "transform 0.2s ease" : "none",
-        }}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        className="relative z-10 touch-pan-y"
+
+      {/* Draggable content */}
+      <motion.div
+        style={{ x }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        className="relative z-10 touch-pan-y cursor-grab active:cursor-grabbing"
       >
         {children}
-      </div>
+      </motion.div>
     </div>
   );
 }

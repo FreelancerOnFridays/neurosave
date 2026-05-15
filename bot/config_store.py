@@ -161,4 +161,20 @@ def set_brief_enabled(enabled: bool) -> None:
     _persist()
 
 
+_SUPPORTED_THEMES = ("auto", "light", "dark")
+
+
+@beartype
+def get_theme() -> str:
+    return _config.get("theme", "auto")
+
+
+@beartype
+def set_theme(theme: str) -> None:
+    if theme not in _SUPPORTED_THEMES:
+        raise ValueError(f"Unsupported theme: {theme}")
+    _config["theme"] = theme
+    _persist()
+
+
 _load()

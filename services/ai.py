@@ -301,6 +301,39 @@ async def generate_nudge_message(
 
 
 @beartype
+async def generate_away_message(language: str = "ru") -> str:
+    """Generate a polite away message for Ghost Mode."""
+    from datetime import datetime, timezone
+    lang_name = _LANG_NAMES.get(language, "Russian")
+    hour = datetime.now(timezone.utc).hour
+    time_hint = (
+        "morning" if 5 <= hour < 12
+        else "afternoon" if 12 <= hour < 18
+        else "evening"
+    )
+    client = _get_client()
+    completion = await client.chat.completions.create(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"Write a short, polite away message in {lang_name} for a busy entrepreneur. "
+                    f"It is currently {time_hint}. "
+                    "The message should: say they are currently unavailable, "
+                    "invite the sender to briefly describe their request, "
+                    "and note that they will respond as soon as possible. "
+                    "Keep it to 1-2 sentences. No emojis. Natural and friendly tone."
+                ),
+            },
+            {"role": "user", "content": "Generate an away message."},
+        ],
+        max_completion_tokens=100,
+    )
+    return (completion.choices[0].message.content or "").strip()
+
+
+@beartype
 async def extract_reminder_from_context(
     context_text: str,
     trigger_text: str,

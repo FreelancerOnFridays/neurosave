@@ -149,8 +149,8 @@ async def cmd_alias(message: Message, session: AsyncSession) -> None:
 
 
 @router.message(Command("reminders"))
-async def cmd_reminders_handler(message: Message) -> None:
-    await cmd_reminders(message)
+async def cmd_reminders_handler(message: Message, session: AsyncSession) -> None:
+    await cmd_reminders(message, session)
 
 
 @router.message(Command("vip"))
@@ -199,11 +199,11 @@ async def cmd_digest_handler(message: Message, session: AsyncSession) -> None:
 
 
 @router.message(Command("today"))
-async def cmd_today(message: Message) -> None:
+async def cmd_today(message: Message, session: AsyncSession) -> None:
     if message.from_user is None or message.from_user.id != settings.owner_chat_id:
         return
     from bot.schedule import build_today_schedule
-    text, markup = build_today_schedule(message.from_user.id)
+    text, markup = await build_today_schedule(message.from_user.id, session)
     await message.answer(text, parse_mode="HTML", reply_markup=markup)
 
 

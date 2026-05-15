@@ -1,24 +1,24 @@
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from beartype import beartype
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config_store import get_language, get_timezone
-from bot.reminder_store import ActiveReminder, get_active
+from db.models import Task
+from db.repositories import tasks as task_repo
 
 
-def reminder_hash(text: str) -> str:
-    return hashlib.md5(text.encode()).hexdigest()[:8]
+def _task_id_str(task_id: int) -> str:
+    return str(task_id)
 
 
-def _fmt_hm(iso: str, tz_name: str) -> str:
+def _fmt_hm(dt: datetime, tz_name: str) -> str:
     try:
-        dt = datetime.fromisoformat(iso)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         local = dt.astimezone(ZoneInfo(tz_name))
@@ -27,9 +27,10 @@ def _fmt_hm(iso: str, tz_name: str) -> str:
         return ""
 
 
-def _is_today(iso: str, tz_name: str) -> bool:
+def _is_today(dt: datetime | None, tz_name: str) -> bool:
+    if dt is None:
+        return False
     try:
-        dt = datetime.fromisoformat(iso)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(ZoneInfo(tz_name)).date() == datetime.now(ZoneInfo(tz_name)).date()
@@ -38,13 +39,16 @@ def _is_today(iso: str, tz_name: str) -> bool:
 
 
 @beartype
-def build_today_schedule(owner_id: int) -> tuple[str, InlineKeyboardMarkup | None]:
+async def build_today_schedule(
+    owner_id: int, session: AsyncSession
+) -> tuple[str, InlineKeyboardMarkup | None]:
     lang = get_language()
     tz_name = get_timezone()
 
-    today: list[ActiveReminder] = sorted(
-        [r for r in get_active(owner_id) if _is_today(r.reminder_time_iso, tz_name)],
-        key=lambda r: r.reminder_time_iso or "",
+    personal_tasks = await task_repo.get_today_tasks(session, owner_id, is_personal=True)
+    today: list[Task] = sorted(
+        personal_tasks,
+        key=lambda t: (t.reminder_time or t.deadline or datetime.max.replace(tzinfo=timezone.utc)),
     )
 
     if not today:
@@ -55,14 +59,15 @@ def build_today_schedule(owner_id: int) -> tuple[str, InlineKeyboardMarkup | Non
     lines = [header]
     builder = InlineKeyboardBuilder()
 
-    for r in today:
-        time_str = _fmt_hm(r.reminder_time_iso, tz_name) if r.reminder_time_iso else ""
-        entry = f"• {r.reminder_text}"
+    for t in today:
+        time_dt = t.reminder_time or t.deadline
+        time_str = _fmt_hm(time_dt, tz_name) if time_dt else ""
+        entry = f"• {t.description}"
         if time_str:
             entry += f" — <b>{time_str}</b>"
         lines.append(entry)
-        btn_label = f"✅  {r.reminder_text[:28]}"
-        builder.button(text=btn_label, callback_data=f"sched_done:{reminder_hash(r.reminder_text)}")
+        btn_label = f"✅  {t.description[:28]}"
+        builder.button(text=btn_label, callback_data=f"sched_done:{t.id}")
 
     builder.adjust(1)
     hint = "\nНажмите кнопку, чтобы отметить выполненным." if lang == "ru" else "\nTap to mark as done."

@@ -17,7 +17,6 @@ from bot.config_store import (
     is_brief_enabled,
     set_last_brief_date,
 )
-from bot.reminder_store import get_active
 from config import settings
 from db.engine import session_factory
 from db.models import InquiryCategory
@@ -100,16 +99,13 @@ async def build_and_send_brief(bot: Bot) -> None:
     midnight_utc = midnight_local.astimezone(timezone.utc)
 
     async with session_factory() as session:
-        delegated_today = await task_repo.get_tasks_due_today(session, owner_id)
+        delegated_today = await task_repo.get_today_tasks(session, owner_id, is_personal=False)
+        my_tasks = await task_repo.get_today_tasks(session, owner_id, is_personal=True)
         overdue = await task_repo.get_overdue_tasks(session, owner_id)
         night_msgs = await msg_repo.get_messages_in_range(
             session, owner_id, since=midnight_utc, until=datetime.now(timezone.utc)
         )
         ghost_inquiries = await ghost_repo.get_inquiries_since(session, owner_id, since=midnight_utc)
-
-    active_reminders = get_active(owner_id)
-    # Owner's personal to-do = reminders firing today
-    my_tasks = [r for r in active_reminders if _is_today_iso(r.reminder_time_iso, tz_name)]
 
     # Group raw incoming messages by sender (fallback when ghost was off)
     incoming_by_sender: dict[int, _SenderInfo] = {}
@@ -127,12 +123,13 @@ async def build_and_send_brief(bot: Bot) -> None:
         date_str = now_local.strftime("%b %d")
         lines = [f"☕ <b>Good morning! Briefing — {date_str}</b>"]
 
-    # ── Section 1: Owner's personal tasks (from reminders) ──────────────────
+    # ── Section 1: Owner's personal tasks ────────────────────────────────────
     if my_tasks:
         lines.append("\n✅ <b>Ваши задачи на сегодня:</b>" if lang == "ru" else "\n✅ <b>Your tasks today:</b>")
-        for r in my_tasks:
-            time_str = _fmt_time_iso(r.reminder_time_iso, tz_name, lang) if r.reminder_time_iso else ""
-            lines.append(f"• {r.reminder_text}" + (f" — {time_str}" if time_str else ""))
+        for task in my_tasks:
+            time_dt = task.reminder_time or task.deadline
+            time_str = _fmt_time(time_dt, tz_name) if time_dt else ""
+            lines.append(f"• {task.description}" + (f" — {time_str}" if time_str else ""))
     else:
         label = "нет запланированного" if lang == "ru" else "nothing scheduled"
         lines.append(f"\n✅ <b>{'Ваши задачи на сегодня' if lang == 'ru' else 'Your tasks today'}:</b> {label}")
@@ -185,7 +182,7 @@ async def build_and_send_brief(bot: Bot) -> None:
     # ── Section 5: AI agenda recommendation ──────────────────────────────────
     ctx_parts: list[str] = []
     if my_tasks:
-        ctx_parts.append("Owner's own tasks today: " + "; ".join(r.reminder_text for r in my_tasks))
+        ctx_parts.append("Owner's own tasks today: " + "; ".join(t.description for t in my_tasks))
     if delegated_today:
         ctx_parts.append("Delegated tasks due today: " + "; ".join(
             f"{t.description} ({t.assignee_name or 'no assignee'})" for t in delegated_today

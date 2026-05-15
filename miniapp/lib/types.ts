@@ -1,20 +1,6 @@
 export type TaskStatus = "open" | "done" | "cancelled";
 export type InquiryCategory = "Urgent" | "Sales" | "Team" | "Spam";
-
-export interface Reminder {
-  id: string;
-  reminder_text: string;
-  reminder_time_iso: string;
-  event_time_iso: string | null;
-  lead_description: string | null;
-}
-
-export interface ReminderCreate {
-  reminder_text: string;
-  reminder_time_iso: string;
-  event_time_iso?: string | null;
-  lead_description?: string | null;
-}
+export type Theme = "auto" | "light" | "dark";
 
 export interface Task {
   id: number;
@@ -23,6 +9,8 @@ export interface Task {
   assignee_user_id: number | null;
   assignee_username: string | null;
   deadline: string | null;
+  reminder_time: string | null;
+  is_personal: boolean;
   status: TaskStatus;
   created_at: string;
   chat_id: number;
@@ -32,6 +20,7 @@ export interface GhostStatus {
   is_active: boolean;
   away_message: string | null;
   activated_at: string | null;
+  silent_mode: boolean;
 }
 
 export interface Inquiry {
@@ -49,4 +38,12 @@ export interface AppSettings {
   timezone: string;
   brief_time: string;
   brief_enabled: boolean;
+  theme: Theme;
+}
+
+export interface TodaySummary {
+  personal_count: number;
+  delegated_count: number;
+  overdue_count: number;
+  with_reminders_count: number;
 }
