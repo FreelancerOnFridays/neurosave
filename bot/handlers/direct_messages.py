@@ -7,24 +7,27 @@ from typing import Any, Coroutine
 from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
-from aiogram.types import Message
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.config_store import get_business_connection_id, get_language, get_timezone, set_timezone
+from bot.config_store import get_business_connection_id
+import bot.telethon_client as tg_client
+from db.repositories import user_settings as us_repo
 from bot.handlers.ghost import generate_digest_text
 from bot.reminder_store import delay_from_iso
-from config import settings
 from db.engine import get_session
-from db.models import Task, TaskStatus
+from db.models import Contact, Task
 from db.repositories import contacts as contact_repo
+from services.contact_sync import get_folder_users, _upsert_from_tg_user
 from db.repositories import ghost as ghost_repo
 from db.repositories import messages as msg_repo
 from db.repositories import tasks as task_repo
 from services.ai import (
+    ReminderItem,
     answer_from_context,
     embed_text,
-    extract_task_from_message,
+    extract_tasks_from_message,
     generate_dispatch_message,
     get_style_profile,
     parse_dispatch_command,
@@ -40,9 +43,11 @@ router = Router()
 
 _bg_tasks: set[asyncio.Task[None]] = set()
 
+# Pending dispatch when contact not found: owner_id → {alias, text, bcid, session}
+_pending_dispatch: dict[int, dict[str, object]] = {}
+
 
 def _replace_event_time(text: str, old_iso: str | None, new_iso: str | None, tz_name: str) -> str:
-    """Replace the old event clock time inside a reminder text with the new one."""
     if not old_iso or not new_iso:
         return text
     try:
@@ -89,8 +94,7 @@ def _format_time_local(iso: str | None, tz_name: str, lang: str) -> str:
             month_ru = ["", "янв", "фев", "мар", "апр", "май", "июн",
                         "июл", "авг", "сен", "окт", "ноя", "дек"][local_dt.month]
             return f"{day} {month_ru} в {hour}:{minute}"
-        month_en = local_dt.strftime("%b")
-        return f"{month_en} {day} at {hour}:{minute}"
+        return f"{local_dt.strftime('%b')} {day} at {hour}:{minute}"
     except Exception:
         return iso or ""
 
@@ -104,14 +108,12 @@ def _task_deadline_iso(task: Task) -> str | None:
 
 
 def _build_reminders_ctx(tasks: list[Task], tz_name: str, lang: str) -> str:
-    lines: list[str] = []
-    for i, t in enumerate(tasks, 1):
-        time_str = _format_time_local(_task_reminder_iso(t), tz_name, lang)
-        event_str = (
-            f", event: {_format_time_local(_task_deadline_iso(t), tz_name, lang)}"
-            if t.deadline else ""
-        )
-        lines.append(f"{i}. {t.description} — reminder at {time_str}{event_str}")
+    lines = [
+        f"{i}. {t.description} — reminder at "
+        f"{_format_time_local(_task_reminder_iso(t), tz_name, lang)}"
+        + (f", event: {_format_time_local(_task_deadline_iso(t), tz_name, lang)}" if t.deadline else "")
+        for i, t in enumerate(tasks, 1)
+    ]
     return "\n".join(lines) if lines else "(none)"
 
 
@@ -123,9 +125,8 @@ def _find_task_by_hint(tasks: list[Task], hint: str | None) -> Task | None:
         if hint_lower in t.description.lower() or t.description.lower() in hint_lower:
             return t
     for t in tasks:
-        for word in hint_lower.split():
-            if len(word) > 2 and word in t.description.lower():
-                return t
+        if any(len(w) > 2 and w in t.description.lower() for w in hint_lower.split()):
+            return t
     return tasks[-1] if len(tasks) == 1 else None
 
 
@@ -163,13 +164,23 @@ async def _delayed_send(
     if delay_seconds > 0:
         await asyncio.sleep(delay_seconds)
     try:
-        await bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            business_connection_id=business_connection_id,
-        )
+        await bot.send_message(chat_id=chat_id, text=text, business_connection_id=business_connection_id)
     except Exception:
         logger.exception("Failed to send dispatch message to chat %d", chat_id)
+
+
+async def _delayed_send_telethon(
+    client: object,
+    user_id: int,
+    text: str,
+    delay_seconds: float,
+) -> None:
+    if delay_seconds > 0:
+        await asyncio.sleep(delay_seconds)
+    try:
+        await client.send_message(user_id, text)  # type: ignore[union-attr]
+    except Exception:
+        logger.exception("Telethon send failed to user %d", user_id)
 
 
 async def _ghost_auto_off(bot: Bot, owner_id: int, delay_seconds: float) -> None:
@@ -183,10 +194,91 @@ async def _ghost_auto_off(bot: Bot, owner_id: int, delay_seconds: float) -> None
         logger.exception("Failed to auto-deactivate ghost mode for owner %d", owner_id)
 
 
+async def _get_send_client(
+    owner_id: int,
+    telethon_session: str | None,
+) -> object | None:
+    """Return an authorized Telethon client, or None if unavailable."""
+    client = await tg_client.get_client(owner_id, telethon_session)
+    if client and await tg_client.is_authorized(owner_id, telethon_session):
+        return client
+    return None
+
+
+async def _dispatch_contact(
+    contact: Contact,
+    send_text: str,
+    bot: Bot,
+    bcid: str | None,
+    delay_seconds: float,
+    owner_id: int,
+    telethon_session: str | None,
+    session: AsyncSession,
+    original_text: str,
+    message: Message,
+    lang: str,
+    tz_name: str,
+) -> bool:
+    """Fire a send to one contact (Bot API or Telethon fallback). Returns True if queued."""
+    if contact.has_business_chat:
+        _fire(_delayed_send(bot, contact.user_id, send_text, bcid, delay_seconds))
+    else:
+        client = await _get_send_client(owner_id, telethon_session)
+        if client is None:
+            return False
+        _fire(_delayed_send_telethon(client, contact.user_id, send_text, delay_seconds))
+
+    display_name = contact.saved_name or contact.name or ""
+    try:
+        extracted_list = await extract_tasks_from_message(original_text, language=lang, tz_name=tz_name)
+        for extracted in extracted_list:
+            task_deadline: datetime | None = None
+            if extracted.deadline_iso:
+                try:
+                    task_deadline = datetime.fromisoformat(extracted.deadline_iso)
+                    if task_deadline.tzinfo is None:
+                        task_deadline = task_deadline.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    pass
+            await task_repo.create_task(
+                session,
+                owner_id=owner_id,
+                chat_id=contact.user_id,
+                message_id=message.message_id,
+                description=extracted.description or "",
+                assignee_name=display_name,
+                assignee_user_id=contact.user_id,
+                assignee_username=contact.username,
+                deadline=task_deadline,
+            )
+    except Exception:
+        logger.exception("Task extraction failed for contact %d", contact.user_id)
+
+    return True
+
+
+def _contact_picker_keyboard(alias: str, contacts: list[Contact]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for c in contacts:
+        label = (c.saved_name or c.name or c.username or str(c.user_id))[:20]
+        row.append(InlineKeyboardButton(
+            text=label,
+            callback_data=f"pick_alias:{alias[:20]}:{c.user_id}",
+        ))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 @router.message(F.contact)
 async def handle_contact_share(message: Message, session: AsyncSession) -> None:
-    if message.from_user is None or message.from_user.id != settings.owner_chat_id:
+    if message.from_user is None:
         return
+    owner_id = message.from_user.id
     c = message.contact
     if not c or not c.user_id:
         await message.answer("Не удалось определить Telegram ID этого контакта.")
@@ -197,17 +289,10 @@ async def handle_contact_share(message: Message, session: AsyncSession) -> None:
         parts.append(c.last_name)
     full_name = " ".join(parts)
 
-    await contact_repo.upsert_contact(
-        session,
-        owner_id=settings.owner_chat_id,
-        user_id=c.user_id,
-        name=full_name,
-        has_business_chat=True,
-    )
-    await contact_repo.set_saved_name(
-        session, owner_id=settings.owner_chat_id, user_id=c.user_id, saved_name=full_name,
-    )
-
+    await contact_repo.upsert_contact(session, owner_id=owner_id, user_id=c.user_id,
+                                      name=full_name, has_business_chat=True)
+    await contact_repo.set_saved_name(session, owner_id=owner_id, user_id=c.user_id,
+                                      saved_name=full_name)
     await message.answer(
         f"✅ Контакт сохранён: <b>{full_name}</b>\n"
         f"Теперь можно писать «Напиши {full_name.split()[0]}…»",
@@ -220,41 +305,39 @@ async def _process_owner_text(
     message: Message,
     bot: Bot,
     session: AsyncSession,
+    owner_id: int,
 ) -> None:
-    owner_id = settings.owner_chat_id
-    lang = get_language()
-    tz_name = get_timezone()
+    us = await us_repo.get_or_create(session, owner_id)
+    lang = us.language
+    tz_name = us.timezone
     original_text = text
 
     parsed = await parse_dispatch_command(text, language=lang, tz_name=tz_name)
 
-    # ── Settings change (e.g. timezone) ──────────────────────────────────────
+    # ── Settings change ───────────────────────────────────────────────────────
     if parsed.is_settings and parsed.timezone_iana:
         try:
-            set_timezone(parsed.timezone_iana)
-            await message.answer(f"✅ Часовой пояс изменён: <b>{get_timezone()}</b>", parse_mode="HTML")
-        except ValueError:
+            from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+            ZoneInfo(parsed.timezone_iana)
+            await us_repo.update_settings(session, owner_id, timezone=parsed.timezone_iana)
+            await message.answer(f"✅ Часовой пояс изменён: <b>{parsed.timezone_iana}</b>", parse_mode="HTML")
+        except (KeyError, ZoneInfoNotFoundError):
             await message.answer(
                 f"❌ Не удалось распознать часовой пояс «{parsed.timezone_iana}». "
-                "Попробуйте формат: <code>Europe/Warsaw</code>",
-                parse_mode="HTML",
+                "Попробуйте формат: <code>Europe/Warsaw</code>", parse_mode="HTML",
             )
         return
 
-    # ── Ghost Mode activation / deactivation ─────────────────────────────────
+    # ── Ghost Mode ────────────────────────────────────────────────────────────
     if parsed.is_ghost:
         if parsed.ghost_active:
             gs = await ghost_repo.get_session(session, owner_id)
-            already_active = gs is not None and gs.is_active
-            if already_active and parsed.ghost_away_message:
+            if gs is not None and gs.is_active and parsed.ghost_away_message:
                 await ghost_repo.update_away_message(session, owner_id, parsed.ghost_away_message)
                 await message.answer(f"✅ Сообщение обновлено: «{parsed.ghost_away_message}»")
             else:
-                await ghost_repo.set_active(
-                    session, owner_id,
-                    active=True,
-                    away_message=parsed.ghost_away_message,
-                )
+                await ghost_repo.set_active(session, owner_id, active=True,
+                                            away_message=parsed.ghost_away_message)
                 reply = "👻 Ghost Mode включён. Отвечаю вместо вас и собираю вопросы."
                 if parsed.ghost_away_message:
                     reply += f"\n\nАвтоответ: «{parsed.ghost_away_message}»"
@@ -262,8 +345,7 @@ async def _process_owner_text(
                 if parsed.ghost_until_iso:
                     d = delay_from_iso(parsed.ghost_until_iso)
                     _fire(_ghost_auto_off(bot, owner_id, d))
-                    time_str = _format_time_local(parsed.ghost_until_iso, tz_name, lang)
-                    reply += f"\nАвто-выключение в {time_str}."
+                    reply += f"\nАвто-выключение в {_format_time_local(parsed.ghost_until_iso, tz_name, lang)}."
                 else:
                     reply += "\nНапишите «я свободен» или /ghost off чтобы выключить."
                 await message.answer(reply)
@@ -275,11 +357,45 @@ async def _process_owner_text(
                 await message.answer(digest, parse_mode="HTML")
         return
 
-    # ── New or updated personal reminder (DB-backed) ─────────────────────────
-    if parsed.is_reminder and parsed.reminder_text:
+    # ── Personal reminder ─────────────────────────────────────────────────────
+    if parsed.is_reminder and (parsed.reminder_items or parsed.reminder_text):
+        # ── Multiple reminders: batch create ──────────────────────────────────
+        if len(parsed.reminder_items) >= 2:
+            confirms: list[str] = []
+            for item in parsed.reminder_items:
+                r_time: datetime | None = None
+                if item.reminder_time_iso:
+                    try:
+                        r_time = datetime.fromisoformat(item.reminder_time_iso)
+                        if r_time.tzinfo is None:
+                            r_time = r_time.replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        pass
+                e_time: datetime | None = None
+                if item.event_time_iso:
+                    try:
+                        e_time = datetime.fromisoformat(item.event_time_iso)
+                        if e_time.tzinfo is None:
+                            e_time = e_time.replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        pass
+                created_t = await task_repo.create_personal_task(
+                    session, owner_id=owner_id,
+                    description=item.reminder_text,
+                    deadline=e_time,
+                    reminder_time=r_time,
+                )
+                time_str = _format_time_local(item.reminder_time_iso, tz_name, lang) if item.reminder_time_iso else ""
+                confirms.append(f"• {created_t.description}" + (f" — {time_str}" if time_str else ""))
+            await message.answer(
+                f"✅ Создано {len(confirms)} напоминания:\n" + "\n".join(confirms)
+                + "\nЧтобы изменить или удалить — напишите мне."
+            )
+            return
+
+        # ── Single reminder: existing logic ───────────────────────────────────
         iso = parsed.reminder_time_iso or parsed.scheduled_at_iso
 
-        # Parse reminder_time and deadline (event_time)
         reminder_time: datetime | None = None
         if iso:
             try:
@@ -301,7 +417,6 @@ async def _process_owner_text(
         active_tasks = await task_repo.get_open_tasks(session, owner_id, is_personal=True)
         existing_task = _find_matching_task(active_tasks, parsed.reminder_text)
 
-        # No direct text match but tasks exist → check if it's a reschedule
         if existing_task is None and active_tasks:
             ctx = _build_reminders_ctx(active_tasks, tz_name, lang)
             try:
@@ -318,31 +433,22 @@ async def _process_owner_text(
                             new_reminder_time = new_reminder_time.replace(tzinfo=timezone.utc)
                     except ValueError:
                         pass
-                    new_desc = _replace_event_time(
-                        target.description,
-                        old_iso=_task_deadline_iso(target),
-                        new_iso=parsed.event_time_iso,
-                        tz_name=tz_name,
-                    )
+                    new_desc = _replace_event_time(target.description, _task_deadline_iso(target),
+                                                   parsed.event_time_iso, tz_name)
                     target.description = new_desc
                     await task_repo.set_reminder(session, target.id, new_reminder_time)
                     time_str = _format_time_local(action.new_reminder_time_iso, tz_name, lang)
-                    if action.lead_description:
-                        confirm = f"✅ Перенёс {action.lead_description}: {new_desc} ({time_str})"
-                    else:
-                        confirm = f"✅ Перенёс на {time_str}: {new_desc}"
+                    confirm = (
+                        f"✅ Перенёс {action.lead_description}: {new_desc} ({time_str})"
+                        if action.lead_description else f"✅ Перенёс на {time_str}: {new_desc}"
+                    )
                     await message.answer(confirm)
                     return
 
         is_update = existing_task is not None
         if is_update and existing_task is not None:
-            # Update existing task description and reminder_time
-            new_desc = _replace_event_time(
-                existing_task.description,
-                old_iso=_task_deadline_iso(existing_task),
-                new_iso=parsed.event_time_iso,
-                tz_name=tz_name,
-            )
+            new_desc = _replace_event_time(existing_task.description, _task_deadline_iso(existing_task),
+                                           parsed.event_time_iso, tz_name)
             existing_task.description = new_desc
             if deadline is not None:
                 existing_task.deadline = deadline
@@ -350,11 +456,8 @@ async def _process_owner_text(
             reminder_text = new_desc
         else:
             new_task = await task_repo.create_personal_task(
-                session,
-                owner_id=owner_id,
-                description=parsed.reminder_text,
-                deadline=deadline,
-                reminder_time=reminder_time,
+                session, owner_id=owner_id, description=parsed.reminder_text,
+                deadline=deadline, reminder_time=reminder_time,
             )
             reminder_text = new_task.description
 
@@ -367,10 +470,7 @@ async def _process_owner_text(
                 + ".\nЧтобы изменить время или удалить — просто напишите мне."
             )
         elif time_str:
-            confirm = (
-                f"✅ {verb} в {time_str}: {reminder_text}.\n"
-                "Чтобы изменить время или удалить — просто напишите мне."
-            )
+            confirm = f"✅ {verb} в {time_str}: {reminder_text}.\nЧтобы изменить время или удалить — просто напишите мне."
         else:
             confirm = f"✅ Напоминание {'обновлено' if is_update else 'принято'}: {reminder_text}."
         await message.answer(confirm)
@@ -378,96 +478,147 @@ async def _process_owner_text(
 
     # ── Dispatch to contacts ──────────────────────────────────────────────────
     if parsed.has_dispatch and parsed.recipients:
-        if parsed.literal_message or parsed.message_intent:
-            bcid = get_business_connection_id()
-            sent_to: list[str] = []
-            not_found: list[str] = []
-
-            recent = await msg_repo.get_recent_owner_messages(session, settings.owner_chat_id)
-            style = await get_style_profile(settings.owner_chat_id, [m.text for m in recent])
-            dispatch_delay = delay_from_iso(parsed.scheduled_at_iso)
-
-            for recipient_name in parsed.recipients:
-                matches = await contact_repo.find_contacts_by_name(
-                    session, owner_id=settings.owner_chat_id, name=recipient_name,
-                )
-                if not matches:
-                    not_found.append(recipient_name)
-                    continue
-
-                contact = matches[0]
-                if not contact.has_business_chat:
-                    not_found.append(contact.saved_name or contact.name or recipient_name)
-                    continue
-
-                chat_id = contact.user_id
-                display_name = contact.saved_name or contact.name or recipient_name
-
-                if parsed.literal_message:
-                    send_text = parsed.literal_message
-                else:
-                    try:
-                        send_text = await generate_dispatch_message(
-                            intent=parsed.message_intent,  # type: ignore[arg-type]
-                            recipient_name=display_name,
-                            language=lang,
-                            style_profile=style,
-                        )
-                    except Exception:
-                        logger.exception("Failed to generate dispatch message for %s", display_name)
-                        send_text = parsed.message_intent or ""
-
-                _fire(_delayed_send(bot, chat_id, send_text, bcid, dispatch_delay))
-                if dispatch_delay > 0:
-                    sent_to.append(f"{display_name} ({_format_delay(dispatch_delay, lang)})")
-                else:
-                    sent_to.append(display_name)
-
-                try:
-                    extracted = await extract_task_from_message(
-                        original_text, language=lang, tz_name=tz_name
-                    )
-                    if extracted.has_task and extracted.description:
-                        task_deadline: datetime | None = None
-                        if extracted.deadline_iso:
-                            try:
-                                task_deadline = datetime.fromisoformat(extracted.deadline_iso)
-                                if task_deadline.tzinfo is None:
-                                    task_deadline = task_deadline.replace(tzinfo=timezone.utc)
-                            except ValueError:
-                                pass
-                        await task_repo.create_task(
-                            session,
-                            owner_id=settings.owner_chat_id,
-                            chat_id=chat_id,
-                            message_id=message.message_id,
-                            description=extracted.description,
-                            assignee_name=display_name,
-                            assignee_user_id=contact.user_id,
-                            assignee_username=contact.username,
-                            deadline=task_deadline,
-                        )
-                except Exception:
-                    logger.exception("Task extraction after dispatch failed for %s", display_name)
-
-            lines: list[str] = []
-            if sent_to:
-                lines.append("✅ Отправлено: " + ", ".join(sent_to))
-            if not_found:
-                names = ", ".join(f"«{n}»" for n in not_found)
-                lines.append(
-                    f"❌ Не удалось отправить: {names}\n\n"
-                    "Возможно, в Telegram этот контакт указан под другим именем, "
-                    "или вы ещё не переписывались с ним через бизнес-подключение. "
-                    "Перешлите мне его контакт — я сохраню псевдоним. "
-                    "Если переписки не было, напишите ему сначала сами, и бот сможет "
-                    "отправлять сообщения от вашего имени."
-                )
-            if lines:
-                await message.answer("\n".join(lines))
+        if not (parsed.literal_message or parsed.message_intent):
             return
 
-    # ── Reminder action (adjust time / delete) against DB tasks ─────────────
+        bcid = get_business_connection_id()
+        sent_to: list[str] = []
+        not_found: list[str] = []
+
+        recent_msgs = await msg_repo.get_recent_owner_messages(session, owner_id)
+        style = await get_style_profile(owner_id, [m.text for m in recent_msgs])
+        dispatch_delay = delay_from_iso(parsed.scheduled_at_iso)
+
+        for recipient_name in parsed.recipients:
+            matches = await contact_repo.find_contacts_by_name(
+                session, owner_id=owner_id, name=recipient_name,
+            )
+
+            # ── Group / folder dispatch ───────────────────────────────────────
+            if not matches:
+                group_contacts = await contact_repo.find_contacts_by_label(
+                    session, owner_id=owner_id, label=recipient_name,
+                )
+
+                # Real-time Telethon folder lookup when DB has no label entries yet
+                if not group_contacts:
+                    live_client = await _get_send_client(owner_id, us.telethon_session)
+                    if live_client:
+                        try:
+                            folder_users = await get_folder_users(live_client, recipient_name)
+                            for fu in folder_users:
+                                await _upsert_from_tg_user(session, owner_id, fu, team_label=recipient_name)
+                            await session.flush()
+                            group_contacts = await contact_repo.find_contacts_by_label(
+                                session, owner_id=owner_id, label=recipient_name,
+                            )
+                        except Exception:
+                            logger.exception("Real-time folder lookup failed for '%s'", recipient_name)
+
+                if group_contacts:
+                    group_sent: list[str] = []
+                    for gc in group_contacts:
+                        if parsed.literal_message:
+                            send_text: str = parsed.literal_message
+                        else:
+                            gc_name = gc.saved_name or gc.name or recipient_name
+                            try:
+                                send_text = await generate_dispatch_message(
+                                    intent=parsed.message_intent,  # type: ignore[arg-type]
+                                    recipient_name=gc_name,
+                                    language=lang,
+                                    style_profile=style,
+                                )
+                            except Exception:
+                                send_text = parsed.message_intent or ""
+
+                        ok = await _dispatch_contact(
+                            gc, send_text, bot, bcid, dispatch_delay,
+                            owner_id, us.telethon_session, session,
+                            original_text, message, lang, tz_name,
+                        )
+                        if ok:
+                            group_sent.append(gc.saved_name or gc.name or str(gc.user_id))
+
+                    label_display = recipient_name.capitalize()
+                    if group_sent:
+                        if dispatch_delay > 0:
+                            sent_to.append(f"{label_display} ({_format_delay(dispatch_delay, lang)}): {', '.join(group_sent)}")
+                        else:
+                            sent_to.append(f"{label_display}: {', '.join(group_sent)}")
+                    else:
+                        await message.answer(
+                            f"⚠️ Не удалось отправить сообщение группе «{label_display}» — "
+                            "нет доступа к этим чатам (нет бизнес-подключения и Telethon недоступен)."
+                        )
+                    continue
+
+                not_found.append(recipient_name)
+                continue
+
+            # ── Individual contact dispatch ───────────────────────────────────
+            contact = matches[0]
+            display_name = contact.saved_name or contact.name or recipient_name
+
+            if parsed.literal_message:
+                send_text = parsed.literal_message
+            else:
+                try:
+                    send_text = await generate_dispatch_message(
+                        intent=parsed.message_intent,  # type: ignore[arg-type]
+                        recipient_name=display_name,
+                        language=lang,
+                        style_profile=style,
+                    )
+                except Exception:
+                    logger.exception("Failed to generate dispatch message for %s", display_name)
+                    send_text = parsed.message_intent or ""
+
+            ok = await _dispatch_contact(
+                contact, send_text, bot, bcid, dispatch_delay,
+                owner_id, us.telethon_session, session,
+                original_text, message, lang, tz_name,
+            )
+            if ok:
+                label = f"{display_name} ({_format_delay(dispatch_delay, lang)})" if dispatch_delay > 0 else display_name
+                sent_to.append(label)
+            else:
+                not_found.append(display_name)
+
+        if sent_to:
+            await message.answer("✅ Отправлено: " + ", ".join(sent_to))
+
+        for alias in not_found:
+            recent_contacts = await contact_repo.get_recent_contacts(session, owner_id, limit=12)
+            if not recent_contacts:
+                await message.answer(f"❓ Не нашёл «{alias}» — синхронизируйте контакты (/sync_contacts).")
+                continue
+
+            if parsed.literal_message:
+                pending_text: str = parsed.literal_message
+            else:
+                try:
+                    pending_text = await generate_dispatch_message(
+                        intent=parsed.message_intent,  # type: ignore[arg-type]
+                        recipient_name=alias, language=lang, style_profile=style,
+                    )
+                except Exception:
+                    pending_text = parsed.message_intent or ""
+
+            _pending_dispatch[owner_id] = {
+                "alias": alias,
+                "text": pending_text,
+                "business_connection_id": bcid,
+                "telethon_session": us.telethon_session,
+            }
+            await message.answer(
+                f"❓ Не нашёл «{alias}» среди контактов.\n"
+                "Выберите кого вы имеете в виду — запомню псевдоним и отправлю:",
+                reply_markup=_contact_picker_keyboard(alias, recent_contacts),
+            )
+        return
+
+    # ── Reminder action (adjust / delete) ────────────────────────────────────
     active_tasks = await task_repo.get_open_tasks(session, owner_id, is_personal=True)
     if active_tasks:
         ctx = _build_reminders_ctx(active_tasks, tz_name, lang)
@@ -485,25 +636,25 @@ async def _process_owner_text(
         if action.action == "adjust_time" and action.new_reminder_time_iso:
             target = _find_task_by_hint(active_tasks, action.reminder_hint)
             if target:
-                new_reminder_time2: datetime | None = None
+                new_rt: datetime | None = None
                 try:
-                    new_reminder_time2 = datetime.fromisoformat(action.new_reminder_time_iso)
-                    if new_reminder_time2.tzinfo is None:
-                        new_reminder_time2 = new_reminder_time2.replace(tzinfo=timezone.utc)
+                    new_rt = datetime.fromisoformat(action.new_reminder_time_iso)
+                    if new_rt.tzinfo is None:
+                        new_rt = new_rt.replace(tzinfo=timezone.utc)
                 except ValueError:
                     pass
-                await task_repo.set_reminder(session, target.id, new_reminder_time2)
+                await task_repo.set_reminder(session, target.id, new_rt)
                 time_str = _format_time_local(action.new_reminder_time_iso, tz_name, lang)
-                if action.lead_description:
-                    confirm = f"✅ Напомню {action.lead_description}: {target.description} ({time_str})"
-                else:
-                    confirm = f"✅ Напомню в {time_str}: {target.description}"
+                confirm = (
+                    f"✅ Напомню {action.lead_description}: {target.description} ({time_str})"
+                    if action.lead_description else f"✅ Напомню в {time_str}: {target.description}"
+                )
                 await message.answer(confirm)
             else:
                 await message.answer("Не нашёл такое напоминание. Используйте /reminders чтобы увидеть список.")
             return
 
-    # ── Semantic history search (fallback) ───────────────────────────────────
+    # ── Semantic search fallback ──────────────────────────────────────────────
     thinking = await message.answer("🔍 Ищу в истории переписок…")
     try:
         query_vec = await embed_text(text)
@@ -512,12 +663,7 @@ async def _process_owner_text(
             await thinking.edit_text("Не нашёл ничего похожего в истории переписок.")
             return
         name_map = await contact_repo.get_name_map(session, owner_id)
-        ans = await answer_from_context(
-            text, results,
-            language=lang,
-            name_map=name_map,
-            tz_name=tz_name,
-        )
+        ans = await answer_from_context(text, results, language=lang, name_map=name_map, tz_name=tz_name)
         await thinking.edit_text(ans, parse_mode="HTML")
     except Exception:
         logger.exception("Semantic search fallback failed")
@@ -526,19 +672,18 @@ async def _process_owner_text(
 
 @router.message(F.text & ~F.text.startswith("/"))
 async def handle_owner_dispatch(message: Message, bot: Bot, session: AsyncSession) -> None:
-    if message.from_user is None or message.from_user.id != settings.owner_chat_id:
+    if message.from_user is None or not message.text:
         return
-    if not message.text:
-        return
-    await _process_owner_text(message.text, message, bot, session)
+    owner_id = message.from_user.id
+    await us_repo.get_or_create(session, owner_id)
+    await _process_owner_text(message.text, message, bot, session, owner_id)
 
 
 @router.message(F.voice)
 async def handle_owner_voice(message: Message, bot: Bot, session: AsyncSession) -> None:
-    if message.from_user is None or message.from_user.id != settings.owner_chat_id:
+    if message.from_user is None or not message.voice:
         return
-    if not message.voice:
-        return
+    owner_id = message.from_user.id
     thinking = await message.answer("🎙 Распознаю…")
     try:
         buf = await bot.download(message.voice)
@@ -551,23 +696,22 @@ async def handle_owner_voice(message: Message, bot: Bot, session: AsyncSession) 
         await thinking.edit_text("❌ Не удалось распознать голосовое сообщение.")
         return
     await thinking.edit_text(f"🎙 <i>{text}</i>", parse_mode="HTML")
-    await _process_owner_text(text, message, bot, session)
+    await us_repo.get_or_create(session, owner_id)
+    await _process_owner_text(text, message, bot, session, owner_id)
 
 
 async def cmd_reminders(message: Message, session: AsyncSession) -> None:
-    """Called from commands router — lists active personal tasks/reminders for the owner."""
-    if message.from_user is None or message.from_user.id != settings.owner_chat_id:
+    if message.from_user is None:
         return
     owner_id = message.from_user.id
-    tz_name = get_timezone()
-    lang = get_language()
+    us = await us_repo.get_or_create(session, owner_id)
     active = await task_repo.get_open_tasks(session, owner_id, is_personal=True)
     if not active:
         await message.answer("Активных напоминаний нет.")
         return
     lines = ["⏰ <b>Активные напоминания:</b>"]
     for i, t in enumerate(active, 1):
-        time_str = _format_time_local(_task_reminder_iso(t), tz_name, lang)
+        time_str = _format_time_local(_task_reminder_iso(t), us.timezone, us.language)
         lines.append(f"{i}. {t.description}" + (f" — {time_str}" if time_str else ""))
     lines.append("\nЧтобы изменить или удалить — напишите, например: «удали напоминание про стрижку» или «перенеси встречу на 8 утра».")
     await message.answer("\n".join(lines), parse_mode="HTML")

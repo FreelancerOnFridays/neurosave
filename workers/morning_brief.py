@@ -9,20 +9,12 @@ from zoneinfo import ZoneInfo
 from aiogram import Bot
 from beartype import beartype
 
-from bot.config_store import (
-    get_brief_time,
-    get_language,
-    get_last_brief_date,
-    get_timezone,
-    is_brief_enabled,
-    set_last_brief_date,
-)
-from config import settings
 from db.engine import session_factory
 from db.models import InquiryCategory
 from db.repositories import ghost as ghost_repo
 from db.repositories import messages as msg_repo
 from db.repositories import tasks as task_repo
+from db.repositories import user_settings as us_repo
 from services.ai import generate_agenda_recommendation
 
 logger = logging.getLogger(__name__)
@@ -89,10 +81,15 @@ def _is_today_iso(iso: str, tz_name: str) -> bool:
         return False
 
 
-async def build_and_send_brief(bot: Bot) -> None:
-    owner_id = settings.owner_chat_id
-    lang = get_language()
-    tz_name = get_timezone()
+_last_brief_dates: dict[int, str] = {}
+
+
+async def build_and_send_brief(bot: Bot, user_id: int) -> None:
+    owner_id = user_id
+    async with session_factory() as _us_sess:
+        us = await us_repo.get_or_create(_us_sess, owner_id)
+        lang = us.language
+        tz_name = us.timezone
     tz = ZoneInfo(tz_name)
     now_local = datetime.now(tz)
     midnight_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -219,20 +216,24 @@ async def build_and_send_brief(bot: Bot) -> None:
 async def run_loop(bot: Bot) -> None:
     while True:
         await asyncio.sleep(_CHECK_INTERVAL)
-        if not is_brief_enabled():
-            continue
         try:
-            tz_name = get_timezone()
-            tz = ZoneInfo(tz_name)
-            now_local = datetime.now(tz)
-            today_str = now_local.strftime("%Y-%m-%d")
-            brief_h, brief_m = map(int, get_brief_time().split(":"))
-
-            if (
-                (now_local.hour > brief_h or (now_local.hour == brief_h and now_local.minute >= brief_m))
-                and get_last_brief_date() != today_str
-            ):
-                await build_and_send_brief(bot)
-                set_last_brief_date(today_str)  # persist only after successful send
+            async with session_factory() as session:
+                users = await us_repo.get_brief_users(session)
+            for us in users:
+                try:
+                    tz = ZoneInfo(us.timezone)
+                    now_local = datetime.now(tz)
+                    today_str = now_local.strftime("%Y-%m-%d")
+                    brief_h, brief_m = map(int, us.brief_time.split(":"))
+                    already_sent = _last_brief_dates.get(us.owner_id) == today_str
+                    time_reached = (
+                        now_local.hour > brief_h
+                        or (now_local.hour == brief_h and now_local.minute >= brief_m)
+                    )
+                    if time_reached and not already_sent:
+                        await build_and_send_brief(bot, us.owner_id)
+                        _last_brief_dates[us.owner_id] = today_str
+                except Exception:
+                    logger.exception("Morning brief failed for user %d", us.owner_id)
         except Exception:
             logger.exception("Morning brief loop iteration failed")

@@ -2,20 +2,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth import get_owner_id
-from bot.config_store import (
-    get_brief_time,
-    get_language,
-    get_theme,
-    get_timezone,
-    is_brief_enabled,
-    set_brief_enabled,
-    set_brief_time,
-    set_language,
-    set_theme,
-    set_timezone,
-)
+from api.dependencies import get_db
+from db.repositories import user_settings as us_repo
 
 router = APIRouter()
 
@@ -37,13 +28,17 @@ class SettingsUpdate(BaseModel):
 
 
 @router.get("", response_model=SettingsOut)
-async def get_settings(owner_id: int = Depends(get_owner_id)) -> SettingsOut:
+async def get_settings(
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> SettingsOut:
+    row = await us_repo.get_or_create(session, owner_id)
     return SettingsOut(
-        language=get_language(),
-        timezone=get_timezone(),
-        brief_time=get_brief_time(),
-        brief_enabled=is_brief_enabled(),
-        theme=get_theme(),
+        language=row.language,
+        timezone=row.timezone,
+        brief_time=row.brief_time,
+        brief_enabled=row.brief_enabled,
+        theme=row.theme,
     )
 
 
@@ -51,21 +46,21 @@ async def get_settings(owner_id: int = Depends(get_owner_id)) -> SettingsOut:
 async def update_settings(
     body: SettingsUpdate,
     owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
 ) -> SettingsOut:
-    if body.language is not None:
-        set_language(body.language)
-    if body.timezone is not None:
-        set_timezone(body.timezone)
-    if body.brief_time is not None:
-        set_brief_time(body.brief_time)
-    if body.brief_enabled is not None:
-        set_brief_enabled(body.brief_enabled)
-    if body.theme is not None:
-        set_theme(body.theme)
+    row = await us_repo.update_settings(
+        session,
+        owner_id,
+        language=body.language,
+        timezone=body.timezone,
+        brief_time=body.brief_time,
+        brief_enabled=body.brief_enabled,
+        theme=body.theme,
+    )
     return SettingsOut(
-        language=get_language(),
-        timezone=get_timezone(),
-        brief_time=get_brief_time(),
-        brief_enabled=is_brief_enabled(),
-        theme=get_theme(),
+        language=row.language,
+        timezone=row.timezone,
+        brief_time=row.brief_time,
+        brief_enabled=row.brief_enabled,
+        theme=row.theme,
     )

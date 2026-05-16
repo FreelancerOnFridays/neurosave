@@ -128,15 +128,19 @@ function DelegatedTaskCard({ task, onDelete, onNudge }: DelegatedTaskCardProps) 
 
   return (
     <SwipeAction actions={actions}>
-      <div
-        className="bg-tg-secondary rounded-2xl p-4 cursor-pointer"
-        onClick={() => task.assignee_username && openTgProfile(task.assignee_username)}
-      >
+      <div className="bg-tg-secondary rounded-2xl p-4">
         <p className="text-sm font-medium text-tg-text">{task.description}</p>
         <div className="flex items-center gap-2 mt-1.5">
-          {task.assignee_name && (
+          {task.assignee_username ? (
+            <button
+              onClick={() => openTgProfile(task.assignee_username)}
+              className="text-xs text-tg-accent underline underline-offset-2"
+            >
+              {task.assignee_name ?? `@${task.assignee_username}`}
+            </button>
+          ) : task.assignee_name ? (
             <span className="text-xs text-tg-hint">{task.assignee_name}</span>
-          )}
+          ) : null}
           {task.deadline && (
             <span
               className={`text-xs px-2 py-0.5 rounded-full ${

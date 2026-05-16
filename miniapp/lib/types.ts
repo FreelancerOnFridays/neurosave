@@ -14,6 +14,7 @@ export interface Task {
   status: TaskStatus;
   created_at: string;
   chat_id: number;
+  team_label: string | null;
 }
 
 export interface GhostStatus {
@@ -46,4 +47,34 @@ export interface TodaySummary {
   delegated_count: number;
   overdue_count: number;
   with_reminders_count: number;
+}
+
+export interface Contact {
+  id: number;
+  user_id: number;
+  name: string | null;
+  username: string | null;
+  phone: string | null;
+  email: string | null;
+  team_label: string | null;
+  synced_from: "telethon" | "manual" | null;
+  last_seen: string | null;
+  last_synced_at: string | null;
+}
+
+export interface ContactSyncStatus {
+  last_sync: string | null;
+  telethon_authorized: boolean;
+  telethon_configured: boolean;
+}
+
+export interface IntegrationStatus {
+  provider: string;
+  connected: boolean;
+  email: string | null;
+  scopes: string[];
+}
+
+export interface IntegrationsStatus {
+  google_calendar: IntegrationStatus;
 }

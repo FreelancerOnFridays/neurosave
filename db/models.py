@@ -3,8 +3,8 @@ from __future__ import annotations
 import enum
 from datetime import datetime
 
-from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
-from sqlalchemy import BigInteger, DateTime, Enum, String, Text, func
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, String, Text, func, TIMESTAMP
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -77,6 +77,13 @@ class Contact(Base):
     has_business_chat: Mapped[bool] = mapped_column(default=False, nullable=False)
     is_vip: Mapped[bool] = mapped_column(default=False, nullable=False)
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    phone: Mapped[str | None] = mapped_column(String(32))
+    team_label: Mapped[str | None] = mapped_column(String(64))
+    synced_from: Mapped[str | None] = mapped_column(String(32))
+    tg_first_name: Mapped[str | None] = mapped_column(String(128))
+    tg_last_name: Mapped[str | None] = mapped_column(String(128))
+    email: Mapped[str | None] = mapped_column(String(255))
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class GhostSession(Base):
@@ -88,6 +95,40 @@ class GhostSession(Base):
     away_message: Mapped[str | None] = mapped_column(Text)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     silent_mode: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+
+class UserSettings(Base):
+    __tablename__ = "user_settings"
+
+    owner_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    language: Mapped[str] = mapped_column(String(8), default="ru", nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), default="Europe/Moscow", nullable=False)
+    brief_time: Mapped[str] = mapped_column(String(8), default="09:00", nullable=False)
+    brief_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    theme: Mapped[str] = mapped_column(String(16), default="auto", nullable=False)
+    telethon_session: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class OAuthToken(Base):
+    __tablename__ = "oauth_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    access_token: Mapped[str] = mapped_column(Text, nullable=False)
+    refresh_token: Mapped[str | None] = mapped_column(Text)
+    token_expiry: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scopes: Mapped[str | None] = mapped_column(Text)
+    email: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class GhostInquiry(Base):

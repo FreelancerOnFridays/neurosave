@@ -19,6 +19,10 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "python-multipart>=0.0.9",
+    "telethon>=1.43.2",
+    "qrcode[pil]>=8.2",
+    "google-auth-oauthlib>=1.4.0",
+    "google-api-python-client>=2.196.0",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +37,10 @@ python_version = "3.12"
 
 [[tool.mypy.overrides]]
 module = ["pgvector.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["google.*", "googleapiclient.*", "google_auth_oauthlib.*"]
 ignore_missing_imports = true
 
 [tool.pyright]

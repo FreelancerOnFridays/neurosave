@@ -8,9 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth import get_owner_id
 from api.dependencies import get_db
-from bot.config_store import get_language
 from db.models import InquiryCategory
 from db.repositories import ghost as ghost_repo
+from db.repositories import user_settings as us_repo
 from services.ai import generate_away_message
 
 router = APIRouter()
@@ -108,9 +108,10 @@ async def update_silent_mode(
 @router.post("/generate-reply", response_model=GenerateReplyOut)
 async def generate_reply(
     owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
 ) -> GenerateReplyOut:
-    lang = get_language()
-    text = await generate_away_message(lang)
+    us = await us_repo.get_or_create(session, owner_id)
+    text = await generate_away_message(us.language)
     return GenerateReplyOut(text=text)
 
 

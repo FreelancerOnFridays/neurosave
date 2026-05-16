@@ -86,16 +86,22 @@ function TaskCard({ task, mode, onDone, onCancel, onNudge, onDelete, onSetRemind
   return (
     <>
       <SwipeAction actions={swipeActions}>
-        <div
-          className="bg-tg-secondary rounded-2xl p-4"
-          onClick={() => mode === "delegated" && task.assignee_username && openTgProfile(task.assignee_username)}
-        >
+        <div className="bg-tg-secondary rounded-2xl p-4">
           <div className="flex items-start gap-3">
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-tg-text leading-snug">{task.description}</p>
               <div className="flex items-center flex-wrap gap-1.5 mt-1.5">
-                {mode === "delegated" && task.assignee_name && (
-                  <span className="text-xs text-tg-hint">{task.assignee_name}</span>
+                {mode === "delegated" && (task.assignee_name || task.assignee_username) && (
+                  task.assignee_username ? (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); openTgProfile(task.assignee_username); }}
+                      className="text-xs text-tg-accent underline underline-offset-2"
+                    >
+                      {task.assignee_name ?? `@${task.assignee_username}`}
+                    </button>
+                  ) : (
+                    <span className="text-xs text-tg-hint">{task.assignee_name}</span>
+                  )
                 )}
                 {task.deadline && (
                   <span

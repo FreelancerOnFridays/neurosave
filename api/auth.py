@@ -22,7 +22,7 @@ def _validate_raw(raw: str) -> dict[str, str]:
     if not hmac.compare_digest(expected, provided_hash):
         raise HTTPException(status_code=401, detail="Invalid Telegram signature")
     auth_date = int(params.get("auth_date", "0"))
-    if abs(time.time() - auth_date) > 3600:
+    if abs(time.time() - auth_date) > 86400:
         raise HTTPException(status_code=401, detail="initData expired")
     return params
 
@@ -38,6 +38,6 @@ async def get_owner_id(request: Request) -> int:
     params = _validate_raw(auth_header[4:])
     user_data = json.loads(params.get("user", "{}"))
     user_id = int(user_data.get("id", 0))
-    if user_id != settings.owner_chat_id:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    if user_id == 0:
+        raise HTTPException(status_code=401, detail="Could not identify user")
     return user_id

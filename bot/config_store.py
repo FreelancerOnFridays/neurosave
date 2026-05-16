@@ -177,4 +177,27 @@ def set_theme(theme: str) -> None:
     _persist()
 
 
+@beartype
+def get_telethon_session() -> str | None:
+    val = _config.get("telethon_session", "")
+    return val if val else None
+
+
+@beartype
+def set_telethon_session(session_str: str | None) -> None:
+    _config["telethon_session"] = session_str or ""
+    _persist()
+
+
+@beartype
+def get_last_contact_sync() -> str:
+    return _config.get("last_contact_sync", "")
+
+
+@beartype
+def set_last_contact_sync(dt_str: str) -> None:
+    _config["last_contact_sync"] = dt_str
+    _persist()
+
+
 _load()

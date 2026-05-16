@@ -9,6 +9,8 @@ import { Toggle } from "@/components/ui/Toggle";
 import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Card } from "@/components/ui/Card";
+import { ContactsSection } from "@/components/contacts/ContactsSection";
+import { IntegrationsSection } from "@/components/integrations/IntegrationsSection";
 import { useSettings } from "@/hooks/useSettings";
 import { useLang } from "@/contexts/LanguageContext";
 import type { Theme } from "@/lib/types";
@@ -67,6 +69,9 @@ export default function SettingsPage() {
           />
         </div>
       </Card>
+
+      <ContactsSection />
+      <IntegrationsSection />
     </div>
   );
 }

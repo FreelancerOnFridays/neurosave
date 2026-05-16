@@ -75,6 +75,31 @@ const ru = {
   error_loading: "Ошибка загрузки",
   unknown_contact: "Неизвестный",
   profile_link: "👤 Профиль",
+
+  settings_contacts_title: "Контакты и синхронизация",
+  contacts_sync_now: "Синхронизировать",
+  contacts_syncing: "Синхронизация…",
+  contacts_last_sync: "Последняя синхронизация",
+  contacts_never_synced: "Ещё не синхронизировано",
+  contacts_count: "контактов",
+  contacts_not_configured: "Добавьте TELEGRAM_API_ID и TELEGRAM_API_HASH в .env",
+  contacts_not_authorized: "Отправьте /sync_contacts боту для авторизации",
+  contacts_folders_title: "Папки чатов",
+  contacts_folder_sync: "Синк",
+  contacts_no_folders: "Папки не найдены",
+
+  sync_not_auth_hint: "Подключите ваш аккаунт Telegram для синхронизации контактов",
+  sync_connect_btn: "Подключить аккаунт",
+  sync_connected_label: "Telegram подключён",
+  sync_disconnect_btn: "Отключить",
+  sync_submitting: "Подождите…",
+  sync_continue_btn: "Продолжить",
+  sync_cancel_btn: "Отмена",
+  sync_phone_placeholder: "+79001234567",
+  sync_code_placeholder: "12345",
+  sync_password_placeholder: "Облачный пароль",
+
+  settings_integrations_title: "Интеграции",
 } as const;
 
 const en: Record<keyof typeof ru, string> = {
@@ -152,6 +177,31 @@ const en: Record<keyof typeof ru, string> = {
   error_loading: "Failed to load",
   unknown_contact: "Unknown",
   profile_link: "👤 Profile",
+
+  settings_contacts_title: "Contacts & sync",
+  contacts_sync_now: "Sync now",
+  contacts_syncing: "Syncing…",
+  contacts_last_sync: "Last sync",
+  contacts_never_synced: "Never synced",
+  contacts_count: "contacts",
+  contacts_not_configured: "Add TELEGRAM_API_ID and TELEGRAM_API_HASH to .env",
+  contacts_not_authorized: "Send /sync_contacts to the bot to authorize",
+  contacts_folders_title: "Chat folders",
+  contacts_folder_sync: "Sync",
+  contacts_no_folders: "No folders found",
+
+  sync_not_auth_hint: "Connect your Telegram account to sync contacts",
+  sync_connect_btn: "Connect account",
+  sync_connected_label: "Telegram connected",
+  sync_disconnect_btn: "Disconnect",
+  sync_submitting: "Please wait…",
+  sync_continue_btn: "Continue",
+  sync_cancel_btn: "Cancel",
+  sync_phone_placeholder: "+1234567890",
+  sync_code_placeholder: "12345",
+  sync_password_placeholder: "Cloud password",
+
+  settings_integrations_title: "Integrations",
 };
 
 const strings = { ru, en } as const;

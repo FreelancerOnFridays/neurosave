@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     miniapp_url: str = "http://localhost:3000"
     api_dev_bypass: bool = False
 
+    telegram_api_id: int | None = None
+    telegram_api_hash: str | None = None
+
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    api_base_url: str = "http://localhost:8000"
+
 
 @beartype
 def get_settings() -> Settings:

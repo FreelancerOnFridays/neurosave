@@ -9,10 +9,9 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.config_store import get_timezone
-from config import settings
 from db.models import InquiryCategory
 from db.repositories import ghost as ghost_repo
+from db.repositories import user_settings as us_repo
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -65,8 +64,8 @@ def _fmt_date_range(since: datetime, tz_name: str) -> str:
 async def generate_digest_text(
     session: AsyncSession,
     owner_id: int,
+    tz_name: str = "Europe/Moscow",
 ) -> str:
-    tz_name = get_timezone()
 
     gs = await ghost_repo.get_session(session, owner_id)
     if gs is None or gs.activated_at is None:
@@ -105,15 +104,17 @@ async def generate_digest_text(
 
 @router.message(Command("ghost"))
 async def cmd_ghost(message: Message, session: AsyncSession) -> None:
-    if message.from_user is None or message.from_user.id != settings.owner_chat_id:
+    if message.from_user is None:
         return
+    owner_id = message.from_user.id
+    us = await us_repo.get_or_create(session, owner_id)
     text = message.text or ""
     parts = text.split(maxsplit=1)
     arg = parts[1].strip() if len(parts) > 1 else ""
     cmd = arg.split()[0].lower() if arg else ""
 
     if cmd not in ("on", "off"):
-        gs = await ghost_repo.get_session(session, settings.owner_chat_id)
+        gs = await ghost_repo.get_session(session, owner_id)
         status = "активен" if gs and gs.is_active else "выключен"
         current_msg = ""
         if gs and gs.away_message:
@@ -129,24 +130,24 @@ async def cmd_ghost(message: Message, session: AsyncSession) -> None:
         return
 
     if cmd == "on":
-        gs = await ghost_repo.get_session(session, settings.owner_chat_id)
+        gs = await ghost_repo.get_session(session, owner_id)
         already_active = gs is not None and gs.is_active
 
         custom_msg_part = text.split(maxsplit=2)
         away_msg = custom_msg_part[2].strip() if len(custom_msg_part) > 2 else None
 
         if already_active and away_msg:
-            await ghost_repo.update_away_message(session, settings.owner_chat_id, away_msg)
+            await ghost_repo.update_away_message(session, owner_id, away_msg)
             await message.answer(f"✅ Сообщение обновлено: «{away_msg}»")
         else:
-            await ghost_repo.set_active(session, settings.owner_chat_id, active=True, away_message=away_msg)
+            await ghost_repo.set_active(session, owner_id, active=True, away_message=away_msg)
             status_text = "👻 Ghost Mode включён. Буду отвечать вместо вас и собирать вопросы.\nИспользуйте /digest для просмотра."
             if away_msg:
                 status_text += f"\nСообщение контактам: «{away_msg}»"
             await message.answer(status_text)
     else:
-        digest = await generate_digest_text(session, settings.owner_chat_id)
-        await ghost_repo.set_active(session, settings.owner_chat_id, active=False)
+        digest = await generate_digest_text(session, owner_id, tz_name=us.timezone)
+        await ghost_repo.set_active(session, owner_id, active=False)
         await message.answer("👻 Ghost Mode выключен.")
         if digest:
             await message.answer(digest, parse_mode="HTML")
@@ -154,9 +155,11 @@ async def cmd_ghost(message: Message, session: AsyncSession) -> None:
 
 async def cmd_digest(message: Message, session: AsyncSession) -> None:
     """Called from commands router."""
-    if message.from_user is None or message.from_user.id != settings.owner_chat_id:
+    if message.from_user is None:
         return
-    digest = await generate_digest_text(session, settings.owner_chat_id)
+    owner_id = message.from_user.id
+    us = await us_repo.get_or_create(session, owner_id)
+    digest = await generate_digest_text(session, owner_id, tz_name=us.timezone)
     if not digest:
         await message.answer("Ghost Mode ни разу не активировался — дайджест пуст.")
         return

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { TelegramInit } from "@/components/TelegramInit";
 import { LanguageProvider } from "@/contexts/LanguageContext";
@@ -17,6 +18,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ru" className="h-full">
+      <head>
+        <Script src="https://telegram.org/js/telegram-web-app.js" strategy="beforeInteractive" />
+      </head>
       <body className="min-h-full bg-tg-bg text-tg-text antialiased">
         <TelegramInit />
         <LanguageProvider>

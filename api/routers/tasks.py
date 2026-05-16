@@ -9,11 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth import get_owner_id
 from api.dependencies import get_db
-from bot.config_store import get_language
-from config import settings
-from db.models import Task, TaskStatus
+from db.models import Contact, Task, TaskStatus
 from db.repositories import messages as msg_repo
 from db.repositories import tasks as task_repo
+from db.repositories import user_settings as us_repo
 from services.ai import generate_nudge_message, get_style_profile
 
 router = APIRouter()
@@ -31,6 +30,7 @@ class TaskOut(BaseModel):
     status: str
     created_at: datetime
     chat_id: int
+    team_label: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -74,7 +74,28 @@ async def list_tasks(
         q = q.where(cast(Task.deadline, Date) == filter_date)
     result = await session.execute(q)
     tasks = list(result.scalars().all())
-    return [TaskOut.model_validate(t) for t in tasks]
+
+    assignee_ids = list({t.assignee_user_id for t in tasks if t.assignee_user_id and not t.is_personal})
+    team_labels: dict[int, str] = {}
+    if assignee_ids:
+        cr = await session.execute(
+            select(Contact.user_id, Contact.team_label).where(
+                Contact.owner_id == owner_id,
+                Contact.user_id.in_(assignee_ids),
+                Contact.team_label.isnot(None),
+            )
+        )
+        for uid, label in cr.all():
+            if label:
+                team_labels[uid] = label
+
+    out: list[TaskOut] = []
+    for t in tasks:
+        task_out = TaskOut.model_validate(t)
+        if t.assignee_user_id:
+            task_out.team_label = team_labels.get(t.assignee_user_id)
+        out.append(task_out)
+    return out
 
 
 @router.post("", response_model=TaskOut, status_code=201)
@@ -163,15 +184,16 @@ async def nudge_task(
     if task is None or task.owner_id != owner_id:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    recent = await msg_repo.get_recent_owner_messages(session, settings.owner_chat_id)
-    style = await get_style_profile(settings.owner_chat_id, [m.text for m in recent])
+    us = await us_repo.get_or_create(session, owner_id)
+    recent = await msg_repo.get_recent_owner_messages(session, owner_id)
+    style = await get_style_profile(owner_id, [m.text for m in recent])
 
     try:
         nudge_text = await generate_nudge_message(
             description=task.description,
             assignee_name=task.assignee_name,
             deadline=task.deadline,
-            language=get_language(),
+            language=us.language,
             style_profile=style,
         )
     except Exception:

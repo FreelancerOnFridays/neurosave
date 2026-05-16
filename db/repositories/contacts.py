@@ -143,6 +143,38 @@ async def get_name_map(session: AsyncSession, owner_id: int) -> dict[int, str]:
 
 
 @beartype
+async def find_contacts_by_label(
+    session: AsyncSession,
+    owner_id: int,
+    label: str,
+) -> list[Contact]:
+    result = await session.execute(
+        select(Contact)
+        .where(
+            Contact.owner_id == owner_id,
+            Contact.team_label.ilike(label),
+        )
+        .order_by(Contact.last_seen.desc().nulls_last())
+    )
+    return list(result.scalars().all())
+
+
+@beartype
+async def get_recent_contacts(
+    session: AsyncSession,
+    owner_id: int,
+    limit: int = 12,
+) -> list[Contact]:
+    result = await session.execute(
+        select(Contact)
+        .where(Contact.owner_id == owner_id)
+        .order_by(Contact.last_seen.desc().nulls_last())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+@beartype
 async def get_vip_list(session: AsyncSession, owner_id: int) -> list[Contact]:
     result = await session.execute(
         select(Contact).where(Contact.owner_id == owner_id, Contact.is_vip.is_(True))

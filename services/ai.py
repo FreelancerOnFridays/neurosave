@@ -75,6 +75,17 @@ class ExtractedTask(BaseModel):
     deadline_iso: str | None = None
 
 
+class ExtractedTaskList(BaseModel):
+    tasks: list[ExtractedTask]
+
+
+class ReminderItem(BaseModel):
+    reminder_text: str
+    reminder_time_iso: str | None = None
+    event_time_iso: str | None = None
+    lead_description: str | None = None
+
+
 class DispatchCommand(BaseModel):
     has_dispatch: bool
     is_reminder: bool = False
@@ -83,12 +94,14 @@ class DispatchCommand(BaseModel):
     recipients: list[str] = []
     literal_message: str | None = None
     message_intent: str | None = None
-    reminder_text: str | None = None
     scheduled_at_iso: str | None = None
-    # reminder-specific fields
+    # reminder-specific fields (single, kept for compat)
+    reminder_text: str | None = None
     event_time_iso: str | None = None
     reminder_time_iso: str | None = None
     lead_description: str | None = None
+    # multiple reminders
+    reminder_items: list[ReminderItem] = []
     # settings-specific fields
     timezone_iana: str | None = None
     # ghost-specific fields
@@ -117,12 +130,22 @@ async def extract_task_from_message(text: str, language: str = "ru", tz_name: st
                 "content": (
                     f"Current local time ({tz_name}): {now}\n"
                     f"Respond in {lang_name}.\n"
-                    "Analyze the message and determine if it contains a task or assignment "
-                    "(something that needs to be done by someone). "
-                    "Extract: what needs to be done, who is responsible (if mentioned), "
-                    "and the deadline converted to ISO 8601 UTC (e.g. '2026-05-14T05:00:00Z'). "
-                    f"Write the description and assignee name in {lang_name}. "
-                    "If no clear task is present, set has_task=false."
+                    "This message was sent BY the owner TO a contact. "
+                    "Determine if the owner is DELEGATING a task — i.e. asking or expecting the contact to DO something specific.\n\n"
+                    "Set has_task=TRUE only when ALL of these hold:\n"
+                    "  1. There is a concrete action the CONTACT (not the owner) must perform.\n"
+                    "  2. The message uses imperative, obligation, or explicit request directed at the other person "
+                    "(e.g. 'пришли', 'сделай', 'подготовь', 'нужно тебе', 'не забудь').\n"
+                    "  3. It is NOT the owner describing their own plans or status.\n\n"
+                    "Set has_task=FALSE for:\n"
+                    "  - Owner status updates: 'буду на месте в 16:30', 'еду', 'скоро приеду', 'жду тебя'\n"
+                    "  - Confirmations and agreements: 'окей', 'договорились', 'хорошо', 'понял', 'до завтра'\n"
+                    "  - Greetings, small talk, compliments\n"
+                    "  - Sharing information without requiring action: 'встретимся в 10', 'завтра в офисе'\n"
+                    "  - Owner's own commitments: 'я подготовлю', 'пришлю', 'позвоню'\n\n"
+                    "If has_task=true, extract: description of what the contact must do, "
+                    "deadline in ISO 8601 UTC if explicitly stated. "
+                    f"Write description in {lang_name}."
                 ),
             },
             {"role": "user", "content": text},
@@ -131,6 +154,42 @@ async def extract_task_from_message(text: str, language: str = "ru", tz_name: st
     )
     parsed = completion.choices[0].message.parsed
     return parsed if parsed is not None else ExtractedTask(has_task=False)
+
+
+@beartype
+async def extract_tasks_from_message(text: str, language: str = "ru", tz_name: str = "UTC") -> list[ExtractedTask]:
+    """Extract ALL delegated tasks from a message. Returns empty list when none found."""
+    now = datetime.now(ZoneInfo(tz_name)).strftime("%Y-%m-%dT%H:%M:%S%z")
+    lang_name = _LANG_NAMES.get(language, "Russian")
+    client = _get_client()
+    completion = await client.beta.chat.completions.parse(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"Current local time ({tz_name}): {now}\n"
+                    f"Respond in {lang_name}.\n"
+                    "This message was sent BY the owner TO a contact. "
+                    "Extract ALL tasks being delegated — there may be more than one.\n\n"
+                    "A task = a concrete action the CONTACT must perform "
+                    "(imperative or obligation directed at them: 'пришли', 'сделай', 'подготовь').\n"
+                    "NOT tasks: owner status updates ('буду там', 'еду'), "
+                    "confirmations ('окей', 'договорились'), greetings, owner's own commitments ('я позвоню').\n\n"
+                    "For each task set has_task=true, write a concise description of what the contact must do, "
+                    "and set deadline_iso in ISO 8601 UTC if a deadline is explicitly stated. "
+                    f"Write all descriptions in {lang_name}. "
+                    "If no tasks are present return an empty list."
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+        response_format=ExtractedTaskList,
+    )
+    parsed = completion.choices[0].message.parsed
+    if parsed is None:
+        return []
+    return [t for t in parsed.tasks if t.has_task and t.description]
 
 
 @beartype
@@ -171,21 +230,20 @@ async def parse_dispatch_command(text: str, language: str = "ru", tz_name: str =
                     "TYPE B — REMINDER: the owner wants to be reminded of something at a future time "
                     "(no other recipients, the reminder is for themselves).\n"
                     "  Set is_reminder=true, has_dispatch=false, is_settings=false, recipients=[].\n"
-                    "  - reminder_text: description of what to remind about, including the event time "
-                    "if known (e.g. 'haircut at 15:00', 'meeting at 18:00 tomorrow'). "
-                    "Keep it short but self-explanatory.\n"
-                    "  - event_time_iso: the time of the actual event (e.g. appointment time) in ISO 8601 with "
-                    "timezone offset. Null if no event time is mentioned.\n"
+                    "  IMPORTANT: if the message mentions MULTIPLE reminders or tasks, populate ALL of them "
+                    "in reminder_items. For a single reminder, still put it in reminder_items as one entry.\n"
+                    "  reminder_items fields per entry:\n"
+                    "  - reminder_text: short self-explanatory description including event time if known "
+                    "(e.g. 'стрижка в 15:00', 'встреча с Димой завтра в 18:00').\n"
+                    "  - event_time_iso: time of the actual event in ISO 8601 with timezone offset. Null if none.\n"
                     "  - reminder_time_iso: when to SEND the reminder in ISO 8601 with timezone offset. "
-                    "For relative times ('in X hours/minutes', 'через X часов/минут'), add EXACTLY that "
-                    "offset to the current local time shown above — do not use a different base. "
-                    "If the owner does not specify a reminder time, pick a sensible lead time: "
-                    "for same-day events use 2 hours before; for next-day events use morning of that day (09:00). "
-                    "If there is no event time at all, default to 1 hour from now. "
-                    "Never set this to the current time or the event time itself.\n"
-                    "  - lead_description: human-readable description of the lead time chosen, in "
-                    f"{lang_name} (e.g. 'за 2 часа' / '2 hours before' / 'утром того дня'). "
-                    "Null if owner explicitly specified the reminder time.\n\n"
+                    "For relative times add EXACTLY that offset to current local time above. "
+                    "If not specified: same-day event → 2 hours before; next-day → 09:00 that day; "
+                    "no event time → 1 hour from now. Never equal to current time or event time.\n"
+                    "  - lead_description: human-readable lead time in "
+                    f"{lang_name} (e.g. 'за 2 часа', 'утром того дня'). Null if owner specified the time.\n"
+                    "  Also copy the FIRST item's fields into top-level reminder_text/reminder_time_iso/"
+                    "event_time_iso/lead_description for backward compatibility.\n\n"
                     "TYPE C — SETTINGS CHANGE: the owner wants to change a bot setting.\n"
                     "  Set is_settings=true, has_dispatch=false, is_reminder=false, is_ghost=false.\n"
                     "  - timezone_iana: if the owner mentions a new location or timezone (city, country, UTC offset), "

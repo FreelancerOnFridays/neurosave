@@ -51,7 +51,7 @@ export function TaskCard({ task, onDone, onCancel, onNudge }: TaskCardProps) {
           <p className="text-tg-text text-sm font-medium leading-snug">
             {task.description}
           </p>
-          <div className="flex items-center gap-2 mt-0.5">
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             {task.assignee_username ? (
               <button
                 onClick={(e) => { e.stopPropagation(); openTgProfile(task.assignee_username); }}
@@ -62,6 +62,11 @@ export function TaskCard({ task, onDone, onCancel, onNudge }: TaskCardProps) {
             ) : task.assignee_name ? (
               <p className="text-xs text-tg-hint">→ {task.assignee_name}</p>
             ) : null}
+            {task.team_label && (
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-tg-accent/10 text-tg-accent leading-none">
+                {task.team_label}
+              </span>
+            )}
           </div>
         </div>
         <div className="flex flex-col items-end shrink-0 gap-1">
