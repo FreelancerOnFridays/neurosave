@@ -40,6 +40,17 @@ export function IntegrationsSection() {
           onRefresh={() => mutate()}
         />
       </div>
+      <div className="mt-3">
+        <IntegrationCard
+          integration={data.notion}
+          label="Notion"
+          icon="📝"
+          description="Сохранение заметок, задач и итогов встреч прямо из чата с ботом"
+          onAuthUrl={api.integrations.notionAuthUrl}
+          onDisconnect={api.integrations.notionDisconnect}
+          onRefresh={() => mutate()}
+        />
+      </div>
     </Card>
   );
 }

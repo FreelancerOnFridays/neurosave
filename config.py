@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     google_client_secret: str | None = None
     api_base_url: str = "http://localhost:8000"
 
+    notion_client_id: str | None = None
+    notion_client_secret: str | None = None
+
 
 @beartype
 def get_settings() -> Settings:

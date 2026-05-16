@@ -23,6 +23,8 @@ dependencies = [
     "qrcode[pil]>=8.2",
     "google-auth-oauthlib>=1.4.0",
     "google-api-python-client>=2.196.0",
+    "notion-client>=3.1.0",
+    "httpx>=0.28.1",
 ]
 
 [project.optional-dependencies]
@@ -41,6 +43,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["google.*", "googleapiclient.*", "google_auth_oauthlib.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["notion_client.*"]
 ignore_missing_imports = true
 
 [tool.pyright]

@@ -114,6 +114,12 @@ class DispatchCommand(BaseModel):
     email_body_intent: str | None = None
     email_literal_body: str | None = None
     email_has_attachment: bool = False
+    # notion-specific fields
+    is_notion: bool = False
+    notion_action: str | None = None  # "capture" | "task" | "meeting_notes"
+    notion_title: str | None = None
+    notion_content: str | None = None
+    notion_due_date_iso: str | None = None
 
 
 class ReminderAction(BaseModel):
@@ -290,8 +296,21 @@ async def parse_dispatch_command(text: str, language: str = "ru", tz_name: str =
                     "  - email_literal_body: exact body text if owner provided it verbatim. Never rephrase.\n"
                     "  - email_body_intent: what to write if no exact body given. Null if literal_body is set.\n"
                     "  - email_has_attachment: true if owner mentions attaching a file/document/image.\n\n"
+                    "TYPE F — NOTION: the owner wants to save something to Notion.\n"
+                    "  Trigger phrases: 'запиши в ноушн', 'добавь в notion', 'заметка в ноушн', "
+                    "'сохрани в ноушн', 'save to notion', 'добавь в ноушн', 'создай заметку'.\n"
+                    "  Set is_notion=true, has_dispatch=false, is_reminder=false, is_email=false.\n"
+                    "  - notion_action: one of 'capture' (quick note/idea), 'task' (to-do item with optional deadline), "
+                    "'meeting_notes' (structured notes about a meeting/call).\n"
+                    "    Use 'task' when owner says 'задача', 'добавь задачу', 'to-do', 'сделать'.\n"
+                    "    Use 'meeting_notes' when owner says 'заметка о встрече', 'итоги встречи', 'конспект'.\n"
+                    "    Default to 'capture' for everything else.\n"
+                    "  - notion_title: short title for the entry (1 sentence max). Generate from context if not given.\n"
+                    "  - notion_content: full content/body to save. Include all relevant details from the message.\n"
+                    "  - notion_due_date_iso: for 'task' action only — deadline in ISO 8601 date format (YYYY-MM-DD). "
+                    "Null if no deadline mentioned.\n\n"
                     "If none of the above apply, set has_dispatch=false, is_reminder=false, is_settings=false, "
-                    "is_ghost=false, is_email=false."
+                    "is_ghost=false, is_email=false, is_notion=false."
                 ),
             },
             {"role": "user", "content": text},
@@ -596,6 +615,27 @@ async def generate_agenda_recommendation(context: str, language: str = "ru") -> 
         max_completion_tokens=100,
     )
     return (completion.choices[0].message.content or "").strip()
+
+
+@beartype
+async def generate_meeting_notes(raw_text: str, language: str = "ru") -> str:
+    lang_name = _LANG_NAMES.get(language, "Russian")
+    client = _get_client()
+    completion = await client.chat.completions.create(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"Structure the following meeting notes in {lang_name}. "
+                    "Format as: Participants, Key decisions, Action items (with owner if mentioned), Next steps. "
+                    "Be concise. Use bullet points. Do not add information not present in the source."
+                ),
+            },
+            {"role": "user", "content": raw_text},
+        ],
+    )
+    return completion.choices[0].message.content or raw_text
 
 
 @beartype

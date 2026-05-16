@@ -118,6 +118,8 @@ export const api = {
     googleDisconnect: () => request<void>("/api/integrations/google", { method: "DELETE" }),
     gmailAuthUrl: () => request<{ url: string }>("/api/integrations/gmail/auth-url"),
     gmailDisconnect: () => request<void>("/api/integrations/gmail", { method: "DELETE" }),
+    notionAuthUrl: () => request<{ url: string }>("/api/integrations/notion/auth-url"),
+    notionDisconnect: () => request<void>("/api/integrations/notion", { method: "DELETE" }),
   },
   sync: {
     status: () =>

@@ -545,6 +545,11 @@ async def _process_owner_text(
             await message.answer("❌ Не удалось отправить письмо. Проверьте подключение Gmail.")
         return
 
+    # ── Notion ────────────────────────────────────────────────────────────────
+    if parsed.is_notion:
+        await _handle_notion(message, parsed, owner_id, session)
+        return
+
     # ── Dispatch to contacts ──────────────────────────────────────────────────
     if parsed.has_dispatch and parsed.recipients:
         if not (parsed.literal_message or parsed.message_intent):
@@ -739,6 +744,61 @@ async def _process_owner_text(
         await thinking.edit_text("❌ Не удалось выполнить поиск.")
 
 
+async def _handle_notion(
+    message: Message,
+    parsed: "DispatchCommand",
+    owner_id: int,
+    session: AsyncSession,
+) -> None:
+    from services import notion as notion_svc
+    from services.ai import generate_meeting_notes
+
+    token = await notion_svc.get_notion_token(owner_id, session)
+    if token is None:
+        await message.answer(
+            "❌ Notion не подключён. Перейди в мини-приложение → Настройки → Интеграции → Notion."
+        )
+        return
+
+    db_id = await notion_svc.get_notion_db_id(owner_id, session)
+    if db_id is None:
+        await message.answer(
+            "⚙️ Notion подключён, но база не настроена.\n"
+            "Отправь боту: /notion_db <ID базы>\n\n"
+            "ID базы можно найти в URL базы Notion: "
+            "notion.so/myworkspace/<b>ID-базы-здесь</b>?v=...",
+            parse_mode="HTML",
+        )
+        return
+
+    title = parsed.notion_title or "Без названия"
+    content = parsed.notion_content or ""
+    action = parsed.notion_action or "capture"
+
+    try:
+        if action == "task":
+            page_id = await notion_svc.create_task_page(
+                token, db_id, title, parsed.notion_due_date_iso
+            )
+            due_note = f" (до {parsed.notion_due_date_iso[:10]})" if parsed.notion_due_date_iso else ""
+            await message.answer(f"✅ Задача добавлена в Notion: <b>{title}</b>{due_note}", parse_mode="HTML")
+
+        elif action == "meeting_notes":
+            if not content:
+                content = f"Встреча: {title}"
+            structured = await generate_meeting_notes(content)
+            page_id = await notion_svc.create_page(token, db_id, title, structured)
+            await message.answer(f"✅ Заметка о встрече сохранена в Notion: <b>{title}</b>", parse_mode="HTML")
+
+        else:  # capture
+            page_id = await notion_svc.create_page(token, db_id, title, content)
+            await message.answer(f"✅ Сохранено в Notion: <b>{title}</b>", parse_mode="HTML")
+
+    except Exception as exc:
+        logger.exception("Notion create_page failed for owner %d: %s", owner_id, exc)
+        await message.answer("❌ Не удалось сохранить в Notion. Проверь подключение и права доступа к базе.")
+
+
 async def _handle_pending_email_address(
     owner_id: int,
     text: str,
@@ -895,6 +955,34 @@ async def handle_owner_voice(message: Message, bot: Bot, session: AsyncSession) 
     await thinking.edit_text(f"🎙 <i>{text}</i>", parse_mode="HTML")
     await us_repo.get_or_create(session, owner_id)
     await _process_owner_text(text, message, bot, session, owner_id)
+
+
+async def cmd_notion_db(message: Message, session: AsyncSession) -> None:
+    if message.from_user is None:
+        return
+    owner_id = message.from_user.id
+    text = message.text or ""
+    parts = text.strip().split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer(
+            "Использование: /notion_db <ID базы>\n\n"
+            "ID можно найти в URL базы Notion:\n"
+            "notion.so/workspace/<b>этот-id-здесь</b>?v=...",
+            parse_mode="HTML",
+        )
+        return
+    db_id = parts[1].strip().replace("-", "")
+    if len(db_id) != 32 or not db_id.isalnum():
+        await message.answer("❌ Неверный формат ID. ID базы Notion — 32 символа (буквы и цифры).")
+        return
+    from services import notion as notion_svc
+    token = await notion_svc.get_notion_token(owner_id, session)
+    if token is None:
+        await message.answer("❌ Сначала подключи Notion в мини-приложении → Настройки → Интеграции.")
+        return
+    await notion_svc.set_notion_db_id(owner_id, db_id, session)
+    await session.commit()
+    await message.answer("✅ База Notion сохранена. Теперь можно говорить: «запиши в ноушн: ...»")
 
 
 async def cmd_reminders(message: Message, session: AsyncSession) -> None:

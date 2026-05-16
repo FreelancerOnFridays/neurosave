@@ -78,5 +78,6 @@ export interface IntegrationStatus {
 export interface IntegrationsStatus {
   google_calendar: IntegrationStatus;
   gmail: IntegrationStatus;
+  notion: IntegrationStatus;
 }
 
