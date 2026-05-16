@@ -85,6 +85,7 @@ function DetailSheet({ contact, history, gmailConnected, onClose, onUpdate }: De
   return (
     <AnimatePresence>
       <motion.div
+        key="crm-detail-overlay"
         className="fixed inset-0 z-40 flex flex-col justify-end"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -246,6 +247,7 @@ function DetailSheet({ contact, history, gmailConnected, onClose, onUpdate }: De
       </motion.div>
 
       <TimePickerSheet
+        key="crm-time-picker"
         open={reminderOpen}
         title={t("crm_add_date")}
         onConfirm={(iso) => {
