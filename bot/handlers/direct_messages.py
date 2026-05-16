@@ -46,6 +46,9 @@ _bg_tasks: set[asyncio.Task[None]] = set()
 # Pending dispatch when contact not found: owner_id → {alias, text, bcid, session}
 _pending_dispatch: dict[int, dict[str, object]] = {}
 
+# Pending email waiting for attachment: owner_id → {to, subject, body}
+_pending_email: dict[int, dict[str, object]] = {}
+
 
 def _replace_event_time(text: str, old_iso: str | None, new_iso: str | None, tz_name: str) -> str:
     if not old_iso or not new_iso:
@@ -476,6 +479,72 @@ async def _process_owner_text(
         await message.answer(confirm)
         return
 
+    # ── Email ─────────────────────────────────────────────────────────────────
+    if parsed.is_email and parsed.recipients:
+        from services import gmail as gmail_svc
+        from services.ai import generate_dispatch_message
+
+        gmail_service = await gmail_svc.get_gmail_service(owner_id, session)
+        if gmail_service is None:
+            await message.answer(
+                "❌ Gmail не подключён. Перейди в мини-приложение → Настройки → Интеграции → Gmail."
+            )
+            return
+
+        recipient_name = parsed.recipients[0]
+        contacts = await contact_repo.find_contacts_by_name(session, owner_id, recipient_name)
+        contact = contacts[0] if contacts else None
+
+        if contact is None or not contact.email:
+            _pending_email[owner_id] = {
+                "recipient_name": recipient_name,
+                "subject": parsed.email_subject or "",
+                "body_intent": parsed.email_body_intent,
+                "literal_body": parsed.email_literal_body,
+                "has_attachment": parsed.email_has_attachment,
+                "contact_id": contact.user_id if contact else None,
+            }
+            name_display = contact.name or recipient_name if contact else recipient_name
+            await message.answer(
+                f"📧 Для {name_display} нет email-адреса в базе.\n"
+                "Введи адрес электронной почты:"
+            )
+            return
+
+        body = parsed.email_literal_body
+        if not body:
+            style = await get_style_profile(owner_id, [])
+            body = await generate_dispatch_message(
+                intent=parsed.email_body_intent or "",
+                recipient_name=contact.name or recipient_name,
+                language=lang,
+                style_profile=style,
+            )
+        subject = parsed.email_subject or f"Сообщение от {await gmail_svc.get_gmail_address(owner_id, session) or 'NeuroSave'}"
+
+        if parsed.email_has_attachment:
+            _pending_email[owner_id] = {
+                "to": contact.email,
+                "subject": subject,
+                "body": body,
+            }
+            await message.answer(
+                f"📎 Прикрепи файл следующим сообщением. Письмо будет отправлено на {contact.email}."
+            )
+            return
+
+        try:
+            await gmail_svc.send_email(gmail_service, to=[contact.email], subject=subject, body=body)
+            await message.answer(
+                f"✅ Письмо отправлено на <b>{contact.email}</b>\n"
+                f"<b>Тема:</b> {subject}\n\n{body[:200]}{'…' if len(body) > 200 else ''}",
+                parse_mode="HTML",
+            )
+        except Exception as exc:
+            logger.exception("Gmail send failed for owner %d: %s", owner_id, exc)
+            await message.answer("❌ Не удалось отправить письмо. Проверьте подключение Gmail.")
+        return
+
     # ── Dispatch to contacts ──────────────────────────────────────────────────
     if parsed.has_dispatch and parsed.recipients:
         if not (parsed.literal_message or parsed.message_intent):
@@ -670,12 +739,140 @@ async def _process_owner_text(
         await thinking.edit_text("❌ Не удалось выполнить поиск.")
 
 
+async def _handle_pending_email_address(
+    owner_id: int,
+    text: str,
+    message: Message,
+    session: AsyncSession,
+) -> bool:
+    """If owner is providing an email address for a pending email, handle it. Returns True if consumed."""
+    pending = _pending_email.get(owner_id)
+    if pending is None or "to" in pending:
+        return False
+
+    import re
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", text.strip()):
+        return False
+
+    email_addr = text.strip()
+    contact_id: int | None = pending.get("contact_id")  # type: ignore[assignment]
+    if contact_id is not None:
+        await contact_repo.set_email(session, owner_id, contact_id, email_addr)
+
+    from services import gmail as gmail_svc
+    from services.ai import generate_dispatch_message
+
+    gmail_service = await gmail_svc.get_gmail_service(owner_id, session)
+    if gmail_service is None:
+        _pending_email.pop(owner_id, None)
+        await message.answer("❌ Gmail не подключён.")
+        return True
+
+    us = await us_repo.get_or_create(session, owner_id)
+    body = pending.get("literal_body") or ""
+    if not body:
+        style = await get_style_profile(owner_id, [])
+        body = await generate_dispatch_message(
+            intent=str(pending.get("body_intent") or ""),
+            recipient_name=str(pending.get("recipient_name") or ""),
+            language=us.language,
+            style_profile=style,
+        )
+    subject = str(pending.get("subject") or "Сообщение из NeuroSave")
+
+    if pending.get("has_attachment"):
+        _pending_email[owner_id] = {"to": email_addr, "subject": subject, "body": body}
+        await message.answer(f"📎 Прикрепи файл следующим сообщением. Письмо будет отправлено на {email_addr}.")
+        return True
+
+    _pending_email.pop(owner_id, None)
+    try:
+        await gmail_svc.send_email(gmail_service, to=[email_addr], subject=subject, body=body)
+        await message.answer(
+            f"✅ Письмо отправлено на <b>{email_addr}</b>\n"
+            f"<b>Тема:</b> {subject}\n\n{body[:200]}{'…' if len(body) > 200 else ''}",
+            parse_mode="HTML",
+        )
+    except Exception as exc:
+        logger.exception("Gmail send failed for owner %d: %s", owner_id, exc)
+        await message.answer("❌ Не удалось отправить письмо.")
+    return True
+
+
+@router.message(F.document | F.photo)
+async def handle_owner_attachment(message: Message, bot: Bot, session: AsyncSession) -> None:
+    if message.from_user is None:
+        return
+    owner_id = message.from_user.id
+    pending = _pending_email.get(owner_id)
+    if pending is None or "to" not in pending:
+        return
+
+    from services import gmail as gmail_svc
+
+    gmail_service = await gmail_svc.get_gmail_service(owner_id, session)
+    if gmail_service is None:
+        _pending_email.pop(owner_id, None)
+        await message.answer("❌ Gmail не подключён.")
+        return
+
+    file_id: str | None = None
+    filename = "attachment"
+    mime_type = "application/octet-stream"
+
+    if message.document:
+        file_id = message.document.file_id
+        filename = message.document.file_name or "document"
+        mime_type = message.document.mime_type or "application/octet-stream"
+    elif message.photo:
+        file_id = message.photo[-1].file_id
+        filename = "photo.jpg"
+        mime_type = "image/jpeg"
+
+    if not file_id:
+        return
+
+    try:
+        buf = await bot.download(file_id)
+        if buf is None:
+            await message.answer("❌ Не удалось скачать файл.")
+            return
+        file_bytes = buf.read()
+    except Exception:
+        logger.exception("Failed to download attachment")
+        await message.answer("❌ Не удалось скачать файл.")
+        return
+
+    to = str(pending["to"])
+    subject = str(pending.get("subject") or "")
+    body = str(pending.get("body") or "")
+    _pending_email.pop(owner_id, None)
+
+    try:
+        await gmail_svc.send_email(
+            gmail_service,
+            to=[to],
+            subject=subject,
+            body=body,
+            attachments=[(filename, file_bytes, mime_type)],
+        )
+        await message.answer(
+            f"✅ Письмо с вложением <b>{filename}</b> отправлено на <b>{to}</b>",
+            parse_mode="HTML",
+        )
+    except Exception as exc:
+        logger.exception("Gmail send with attachment failed for owner %d: %s", owner_id, exc)
+        await message.answer("❌ Не удалось отправить письмо.")
+
+
 @router.message(F.text & ~F.text.startswith("/"))
 async def handle_owner_dispatch(message: Message, bot: Bot, session: AsyncSession) -> None:
     if message.from_user is None or not message.text:
         return
     owner_id = message.from_user.id
     await us_repo.get_or_create(session, owner_id)
+    if await _handle_pending_email_address(owner_id, message.text, message, session):
+        return
     await _process_owner_text(message.text, message, bot, session, owner_id)
 
 

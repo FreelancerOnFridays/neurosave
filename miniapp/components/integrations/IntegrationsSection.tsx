@@ -25,8 +25,21 @@ export function IntegrationsSection() {
         label="Google Calendar"
         icon="📅"
         description="Синхронизация дедлайнов задач с Google Calendar"
+        onAuthUrl={api.integrations.googleAuthUrl}
+        onDisconnect={api.integrations.googleDisconnect}
         onRefresh={() => mutate()}
       />
+      <div className="mt-3">
+        <IntegrationCard
+          integration={data.gmail}
+          label="Gmail"
+          icon="✉️"
+          description="Отправка писем и файлов прямо из чата с ботом"
+          onAuthUrl={api.integrations.gmailAuthUrl}
+          onDisconnect={api.integrations.gmailDisconnect}
+          onRefresh={() => mutate()}
+        />
+      </div>
     </Card>
   );
 }

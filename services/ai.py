@@ -91,6 +91,7 @@ class DispatchCommand(BaseModel):
     is_reminder: bool = False
     is_settings: bool = False
     is_ghost: bool = False
+    is_email: bool = False
     recipients: list[str] = []
     literal_message: str | None = None
     message_intent: str | None = None
@@ -108,6 +109,11 @@ class DispatchCommand(BaseModel):
     ghost_active: bool = True
     ghost_away_message: str | None = None
     ghost_until_iso: str | None = None
+    # email-specific fields
+    email_subject: str | None = None
+    email_body_intent: str | None = None
+    email_literal_body: str | None = None
+    email_has_attachment: bool = False
 
 
 class ReminderAction(BaseModel):
@@ -275,7 +281,17 @@ async def parse_dispatch_command(text: str, language: str = "ru", tz_name: str =
                     "with timezone offset at which ghost mode should auto-deactivate. Null otherwise.\n\n"
                     "IMPORTANT: TYPE D takes priority over TYPE B only when the owner is CURRENTLY "
                     "becoming unavailable. Rescheduling or updating a future appointment is TYPE B.\n\n"
-                    "If none of the above apply, set has_dispatch=false, is_reminder=false, is_settings=false, is_ghost=false."
+                    "TYPE E — EMAIL: the owner wants to send an email to someone.\n"
+                    "  Trigger phrases: 'отправь письмо', 'напиши email', 'пошли на почту', 'send email', "
+                    "'написать email', 'email Диме', 'напиши письмо на почту'.\n"
+                    "  Set is_email=true, has_dispatch=false, is_reminder=false, is_settings=false, is_ghost=false.\n"
+                    "  - recipients: list of recipient names (same normalization as TYPE A).\n"
+                    "  - email_subject: subject line if stated, else generate a short one from context.\n"
+                    "  - email_literal_body: exact body text if owner provided it verbatim. Never rephrase.\n"
+                    "  - email_body_intent: what to write if no exact body given. Null if literal_body is set.\n"
+                    "  - email_has_attachment: true if owner mentions attaching a file/document/image.\n\n"
+                    "If none of the above apply, set has_dispatch=false, is_reminder=false, is_settings=false, "
+                    "is_ghost=false, is_email=false."
                 ),
             },
             {"role": "user", "content": text},

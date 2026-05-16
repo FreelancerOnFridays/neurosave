@@ -77,4 +77,31 @@ export interface IntegrationStatus {
 
 export interface IntegrationsStatus {
   google_calendar: IntegrationStatus;
+  gmail: IntegrationStatus;
+}
+
+export type CrmStatus = "lead" | "negotiation" | "client" | "partner" | "archived";
+
+export interface ContactCrm {
+  id: number;
+  user_id: number;
+  name: string | null;
+  username: string | null;
+  phone: string | null;
+  email: string | null;
+  team_label: string | null;
+  is_vip: boolean;
+  synced_from: "telethon" | "manual" | null;
+  last_seen: string | null;
+  crm_status: CrmStatus | null;
+  notes: string | null;
+  next_action: string | null;
+  next_action_date: string | null;
+  importance: number;
+}
+
+export interface ContactHistory {
+  open_tasks: number;
+  done_tasks: number;
+  total_tasks: number;
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { api } from "@/lib/api";
 import type { IntegrationStatus } from "@/lib/types";
 
 interface Props {
@@ -9,16 +8,18 @@ interface Props {
   label: string;
   icon: string;
   description: string;
+  onAuthUrl: () => Promise<{ url: string }>;
+  onDisconnect: () => Promise<void>;
   onRefresh: () => void;
 }
 
-export function IntegrationCard({ integration, label, icon, description, onRefresh }: Props) {
+export function IntegrationCard({ integration, label, icon, description, onAuthUrl, onDisconnect, onRefresh }: Props) {
   const [loading, setLoading] = useState(false);
 
   async function handleConnect() {
     setLoading(true);
     try {
-      const { url } = await api.integrations.googleAuthUrl();
+      const { url } = await onAuthUrl();
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const WebApp = require("@twa-dev/sdk").default;
@@ -40,7 +41,7 @@ export function IntegrationCard({ integration, label, icon, description, onRefre
   async function handleDisconnect() {
     setLoading(true);
     try {
-      await api.integrations.googleDisconnect();
+      await onDisconnect();
       onRefresh();
     } catch (e) {
       console.error("Failed to disconnect", e);
