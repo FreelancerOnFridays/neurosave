@@ -100,31 +100,6 @@ const ru = {
   sync_password_placeholder: "Облачный пароль",
 
   settings_integrations_title: "Интеграции",
-
-  nav_crm: "CRM",
-  crm_title: "CRM",
-  crm_tab_all: "Все",
-  crm_tab_leads: "Лиды",
-  crm_tab_clients: "Клиенты",
-  crm_tab_partners: "Партнёры",
-  crm_status_lead: "Лид",
-  crm_status_negotiation: "Переговоры",
-  crm_status_client: "Клиент",
-  crm_status_partner: "Партнёр",
-  crm_status_archived: "Архив",
-  crm_next_action: "Следующий шаг",
-  crm_notes: "Заметка",
-  crm_tasks_section: "Задачи",
-  crm_open_tasks: "открытых",
-  crm_no_contacts: "Контактов нет. Синхронизируйте Telegram в Настройках.",
-  crm_last_seen: "Последний контакт",
-  crm_days_ago: "дней назад",
-  crm_action_write: "Написать",
-  crm_action_task: "Задача",
-  crm_action_remind: "Напомнить",
-  crm_action_email: "Email",
-  crm_add_date: "Добавить дату",
-  crm_save_note: "Сохранить",
 } as const;
 
 const en: Record<keyof typeof ru, string> = {
@@ -227,31 +202,6 @@ const en: Record<keyof typeof ru, string> = {
   sync_password_placeholder: "Cloud password",
 
   settings_integrations_title: "Integrations",
-
-  nav_crm: "CRM",
-  crm_title: "CRM",
-  crm_tab_all: "All",
-  crm_tab_leads: "Leads",
-  crm_tab_clients: "Clients",
-  crm_tab_partners: "Partners",
-  crm_status_lead: "Lead",
-  crm_status_negotiation: "Negotiation",
-  crm_status_client: "Client",
-  crm_status_partner: "Partner",
-  crm_status_archived: "Archive",
-  crm_next_action: "Next step",
-  crm_notes: "Note",
-  crm_tasks_section: "Tasks",
-  crm_open_tasks: "open",
-  crm_no_contacts: "No contacts. Sync Telegram in Settings.",
-  crm_last_seen: "Last contact",
-  crm_days_ago: "days ago",
-  crm_action_write: "Message",
-  crm_action_task: "Task",
-  crm_action_remind: "Remind",
-  crm_action_email: "Email",
-  crm_add_date: "Add date",
-  crm_save_note: "Save",
 };
 
 const strings = { ru, en } as const;

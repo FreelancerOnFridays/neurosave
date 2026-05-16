@@ -84,12 +84,6 @@ class Contact(Base):
     tg_last_name: Mapped[str | None] = mapped_column(String(128))
     email: Mapped[str | None] = mapped_column(String(255))
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # CRM fields
-    crm_status: Mapped[str | None] = mapped_column(String(32))
-    notes: Mapped[str | None] = mapped_column(Text)
-    next_action: Mapped[str | None] = mapped_column(Text)
-    next_action_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    importance: Mapped[int] = mapped_column(default=3, nullable=False)
 
 
 class GhostSession(Base):

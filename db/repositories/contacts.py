@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from beartype import beartype
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import Contact, Task, TaskStatus
+from db.models import Contact
 
 
 @beartype
@@ -200,84 +200,6 @@ async def find_contact_by_email(
         select(Contact).where(Contact.owner_id == owner_id, Contact.email == email)
     )
     return result.scalar_one_or_none()
-
-
-@beartype
-async def update_crm(
-    session: AsyncSession,
-    owner_id: int,
-    contact_id: int,
-    crm_status: str | None = None,
-    notes: str | None = None,
-    next_action: str | None = None,
-    next_action_date: datetime | None = None,
-    importance: int | None = None,
-    email: str | None = None,
-) -> Contact | None:
-    result = await session.execute(
-        select(Contact).where(Contact.owner_id == owner_id, Contact.id == contact_id)
-    )
-    contact = result.scalar_one_or_none()
-    if contact is None:
-        return None
-    if crm_status is not None:
-        contact.crm_status = crm_status
-    if notes is not None:
-        contact.notes = notes
-    if next_action is not None:
-        contact.next_action = next_action
-    if next_action_date is not None:
-        contact.next_action_date = next_action_date
-    if importance is not None:
-        contact.importance = importance
-    if email is not None:
-        contact.email = email
-    return contact
-
-
-@beartype
-async def get_contact_by_id(session: AsyncSession, owner_id: int, contact_id: int) -> Contact | None:
-    result = await session.execute(
-        select(Contact).where(Contact.owner_id == owner_id, Contact.id == contact_id)
-    )
-    return result.scalar_one_or_none()
-
-
-@beartype
-async def get_contact_history(
-    session: AsyncSession, owner_id: int, contact_user_id: int
-) -> dict[str, int]:
-    result = await session.execute(
-        select(
-            func.count(Task.id).filter(Task.status == TaskStatus.open).label("open_tasks"),
-            func.count(Task.id).filter(Task.status == TaskStatus.done).label("done_tasks"),
-            func.count(Task.id).label("total_tasks"),
-        ).where(
-            Task.owner_id == owner_id,
-            Task.chat_id == contact_user_id,
-            Task.is_personal.is_(False),
-        )
-    )
-    row = result.one()
-    return {
-        "open_tasks": row.open_tasks or 0,
-        "done_tasks": row.done_tasks or 0,
-        "total_tasks": row.total_tasks or 0,
-    }
-
-
-@beartype
-async def list_crm_contacts(
-    session: AsyncSession,
-    owner_id: int,
-    crm_status: str | None = None,
-) -> list[Contact]:
-    q = select(Contact).where(Contact.owner_id == owner_id)
-    if crm_status:
-        q = q.where(Contact.crm_status == crm_status)
-    q = q.order_by(Contact.importance.desc(), Contact.last_seen.desc().nulls_last())
-    result = await session.execute(q)
-    return list(result.scalars().all())
 
 
 @beartype

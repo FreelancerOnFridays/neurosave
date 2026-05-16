@@ -1,8 +1,6 @@
 import type {
   AppSettings,
   Contact,
-  ContactCrm,
-  ContactHistory,
   ContactSyncStatus,
   GhostStatus,
   Inquiry,
@@ -120,19 +118,6 @@ export const api = {
     googleDisconnect: () => request<void>("/api/integrations/google", { method: "DELETE" }),
     gmailAuthUrl: () => request<{ url: string }>("/api/integrations/gmail/auth-url"),
     gmailDisconnect: () => request<void>("/api/integrations/gmail", { method: "DELETE" }),
-  },
-  crm: {
-    list: (status?: string) => {
-      const q = status ? `?crm_status=${status}` : "";
-      return request<ContactCrm[]>(`/api/contacts${q}`);
-    },
-    get: (id: number) => request<ContactCrm>(`/api/contacts/${id}`),
-    update: (id: number, patch: Partial<ContactCrm>) =>
-      request<ContactCrm>(`/api/contacts/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify(patch),
-      }),
-    history: (id: number) => request<ContactHistory>(`/api/contacts/${id}/history`),
   },
   sync: {
     status: () =>
