@@ -11,6 +11,7 @@ export function BottomNav() {
   const NAV_ITEMS = [
     { href: "/today", icon: "📅", label: t("nav_today") },
     { href: "/tasks", icon: "📌", label: t("nav_tasks") },
+    { href: "/crm", icon: "📇", label: t("nav_crm") },
     { href: "/ghost", icon: "👻", label: t("nav_ghost") },
     { href: "/settings", icon: "⚙️", label: t("nav_settings") },
   ];

@@ -31,8 +31,29 @@ class ContactOut(BaseModel):
     synced_from: str | None
     last_seen: datetime | None
     last_synced_at: datetime | None
+    is_vip: bool = False
+    crm_status: str | None = None
+    notes: str | None = None
+    next_action: str | None = None
+    next_action_date: datetime | None = None
+    importance: int = 3
 
     model_config = {"from_attributes": True}
+
+
+class ContactHistoryOut(BaseModel):
+    open_tasks: int
+    done_tasks: int
+    total_tasks: int
+
+
+class ContactCrmPatch(BaseModel):
+    crm_status: str | None = None
+    notes: str | None = None
+    next_action: str | None = None
+    next_action_date: datetime | None = None
+    importance: int | None = None
+    email: str | None = None
 
 
 class SyncStatus(BaseModel):
@@ -164,3 +185,58 @@ async def trigger_folder_sync(
 
     background_tasks.add_task(_run)
     return {"status": "syncing", "folder": folder_name}
+
+
+@router.get("/{contact_id}", response_model=ContactOut)
+async def get_contact(
+    contact_id: int,
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Contact:
+    from db.repositories import contacts as contact_repo
+
+    contact = await contact_repo.get_contact_by_id(session, owner_id, contact_id)
+    if contact is None:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    return contact
+
+
+@router.patch("/{contact_id}", response_model=ContactOut)
+async def patch_contact(
+    contact_id: int,
+    body: ContactCrmPatch,
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Contact:
+    from db.repositories import contacts as contact_repo
+
+    contact = await contact_repo.update_crm(
+        session,
+        owner_id,
+        contact_id,
+        crm_status=body.crm_status,
+        notes=body.notes,
+        next_action=body.next_action,
+        next_action_date=body.next_action_date,
+        importance=body.importance,
+        email=body.email,
+    )
+    if contact is None:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    await session.commit()
+    return contact
+
+
+@router.get("/{contact_id}/history", response_model=ContactHistoryOut)
+async def contact_history(
+    contact_id: int,
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> ContactHistoryOut:
+    from db.repositories import contacts as contact_repo
+
+    contact = await contact_repo.get_contact_by_id(session, owner_id, contact_id)
+    if contact is None:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    hist = await contact_repo.get_contact_history(session, owner_id, contact.user_id)
+    return ContactHistoryOut(**hist)
