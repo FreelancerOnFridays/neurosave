@@ -128,7 +128,7 @@ For example, you can tell the assistant, “Remind me that I have a haircut at 6
 
 ---
 
-## Development Status (updated 2026-05-15)
+## Development Status (updated 2026-05-17)
 
 ### ✅ Complete
 - **Phase 1** — Foundation: bot skeleton, DB models, middleware, config, migrations
@@ -141,10 +141,18 @@ For example, you can tell the assistant, “Remind me that I have a haircut at 6
 - **Phase 4** — Instant Context / RAG: `embed_text`, `search_similar`, `answer_from_context`, `/ask`
 - **Phase 5** — Morning Coffee Brief: `workers/morning_brief.py`, hot tasks + overdue + night digest + reminders + AI agenda
 - **Phase 8** — Mini-App: NextJS + Tailwind Telegram Mini App with Today/Tasks/Ghost/Settings tabs, Framer Motion animations, swipe actions, theme sync, SegmentedControl, FilterBar, TimePickerSheet, InfoTooltip; OAuth-ready API layer
-
-### 🔜 Planned — Phase 9: External Integrations
-- **OAuth infrastructure** — `oauth_tokens` + `integration_configs` tables, `/api/integrations/` router, token refresh worker
-- **Google Calendar** — OAuth 2.0, task deadline → calendar event sync, “schedule a call” AI command
-- **Gmail** — OAuth, “send email to X with file Y” command, attachment from TG file
-- **Telegram folder sync** — Telethon MTProto userbot, `/sync_folder <name>` → import team contacts
+- **Phase 9** — External Integrations:
+  - OAuth infrastructure: `oauth_tokens` + `integration_configs` tables, `/api/integrations/` router, token refresh worker
+  - Google Calendar: OAuth 2.0, task deadline → calendar event sync, calendar view in mini-app
+  - Gmail: OAuth, send email by name, file attachments from TG, email preview + inline edit/cancel, email persistence via `integration_configs`
+  - Notion: capture notes/tasks/meetings with section routing, custom folder names, markdown formatting toolbar
+  - Google Docs/Sheets: create and list recent documents from mini-app
+  - Telegram folder sync: Telethon MTProto userbot, `/sync_contacts` + folder sync from mini-app
+- **Phase 10** — UX Improvements & Integrations polish:
+  - **10A** — Task cancel: DM to owner after task extraction with ❌ inline button → sets `status=cancelled`
+  - **10B** — Gmail reply forwarding: `workers/gmail_reply_worker.py` polls inbox history every 5 min, forwards new replies as bot DMs
+  - **10C** — Settings cleanup: removed duplicate Notion quick-capture from Settings (lives in Services tab only)
+  - **10D** — Gmail workspace in Services tab: thread list (sent + inbox), “Входящий ответ” badge, compose deep-link
+  - **10E** — Notion workspace improvements: markdown formatting toolbar (B/I/H1/H2/list/checkbox/code), custom section/folder names via `integration_configs`
+  - **10F** — Contacts screen: `/contacts` page with avatars (proxied via Bot API), search, edit `saved_name` + email; “Все контакты” button in Settings
 

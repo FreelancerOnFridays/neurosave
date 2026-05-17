@@ -824,3 +824,83 @@ async def calendar_events(
             url=item.get("htmlLink"),
         ))
     return result
+
+
+# ── Gmail threads ─────────────────────────────────────────────────────────────
+
+class GmailThreadOut(BaseModel):
+    id: str
+    subject: str
+    from_: str
+    snippet: str
+    date: str
+    is_reply: bool
+
+
+@router.get("/gmail/threads", response_model=list[GmailThreadOut])
+async def gmail_threads(
+    limit: int = Query(default=20, ge=1, le=50),
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> list[GmailThreadOut]:
+    from services import gmail as gmail_svc
+
+    service = await gmail_svc.get_gmail_service(owner_id, session)
+    if not service:
+        raise HTTPException(status_code=400, detail="Gmail not connected")
+
+    items = await gmail_svc.list_threads(service, max_results=limit)
+    return [GmailThreadOut(
+        id=m["id"],
+        subject=m["subject"],
+        from_=m["from_"],
+        snippet=m["snippet"],
+        date=m["date"],
+        is_reply=m["is_reply"],
+    ) for m in items]
+
+
+# ── Notion section labels ─────────────────────────────────────────────────────
+
+_NOTION_DEFAULT_LABELS: dict[str, str] = {
+    "capture": "Заметки",
+    "task": "Задачи",
+    "meeting_notes": "Встречи",
+}
+
+
+class NotionSectionNamesIn(BaseModel):
+    capture: str
+    task: str
+    meeting_notes: str
+
+
+@router.get("/notion/sections", response_model=dict[str, str])
+async def get_notion_sections(
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    from db.repositories import integration_configs as cfg_repo
+
+    result: dict[str, str] = {}
+    for key, default in _NOTION_DEFAULT_LABELS.items():
+        val = await cfg_repo.get_config(session, owner_id, f"notion_section_label_{key}")
+        result[key] = val or default
+    return result
+
+
+@router.put("/notion/sections", status_code=204)
+async def update_notion_sections(
+    body: NotionSectionNamesIn,
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> None:
+    from db.repositories import integration_configs as cfg_repo
+
+    for key, val in [
+        ("capture", body.capture),
+        ("task", body.task),
+        ("meeting_notes", body.meeting_notes),
+    ]:
+        await cfg_repo.set_config(session, owner_id, f"notion_section_label_{key}", val.strip() or _NOTION_DEFAULT_LABELS[key])
+    await session.commit()

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Coroutine
 
 from aiogram import Bot, Router
-from aiogram.types import Message
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config_store import get_language, get_timezone, set_business_connection_id, t
@@ -329,5 +329,26 @@ async def handle_business_message(
             chat_id=message.chat.id,
             text=t("task_saved"),
             business_connection_id=message.business_connection_id,
+        )
+    )
+
+    # Send cancellable notification to owner's bot DM
+    owner_chat_id = settings.owner_chat_id
+    task_text = f"📝 <b>Задача добавлена</b>\n{new_task.description}"
+    if new_task.assignee_name:
+        task_text += f"\n👤 {new_task.assignee_name}"
+    if new_task.deadline:
+        task_text += f"\n📅 {new_task.deadline.strftime('%d.%m %H:%M')}"
+    _fire(
+        bot.send_message(
+            chat_id=owner_chat_id,
+            text=task_text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="❌ Отменить задачу",
+                    callback_data=f"task_cancel:{new_task.id}",
+                )
+            ]]),
         )
     )

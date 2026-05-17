@@ -5,6 +5,7 @@ import type {
   ContactSyncStatus,
   DriveFile,
   GhostStatus,
+  GmailThread,
   Inquiry,
   IntegrationsStatus,
   NotionPage,
@@ -114,6 +115,12 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ folder_name }),
       }),
+    update: (user_id: number, body: { saved_name?: string | null; email?: string | null }) =>
+      request<Contact>(`/api/contacts/${user_id}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+    avatarUrl: (user_id: number) => `/api/contacts/${user_id}/avatar`,
   },
   integrations: {
     status: () => request<IntegrationsStatus>("/api/integrations/status"),
@@ -121,6 +128,8 @@ export const api = {
     googleDisconnect: () => request<void>("/api/integrations/google", { method: "DELETE" }),
     gmailAuthUrl: () => request<{ url: string }>("/api/integrations/gmail/auth-url"),
     gmailDisconnect: () => request<void>("/api/integrations/gmail", { method: "DELETE" }),
+    gmailThreads: (limit = 20) =>
+      request<GmailThread[]>(`/api/integrations/gmail/threads?limit=${limit}`),
     notionAuthUrl: () => request<{ url: string }>("/api/integrations/notion/auth-url"),
     notionDisconnect: () => request<void>("/api/integrations/notion", { method: "DELETE" }),
     notionCapture: (title: string, content: string, section: string = "capture") =>
@@ -129,6 +138,12 @@ export const api = {
         body: JSON.stringify({ title, content, section }),
       }),
     notionPages: () => request<NotionPage[]>("/api/integrations/notion/pages"),
+    notionSections: () => request<Record<string, string>>("/api/integrations/notion/sections"),
+    notionSectionsUpdate: (body: { capture: string; task: string; meeting_notes: string }) =>
+      request<void>("/api/integrations/notion/sections", {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }),
     googleDocsAuthUrl: () => request<{ url: string }>("/api/integrations/google-docs/auth-url"),
     googleDocsDisconnect: () => request<void>("/api/integrations/google-docs", { method: "DELETE" }),
     googleDocsFiles: () => request<DriveFile[]>("/api/integrations/google-docs/files"),

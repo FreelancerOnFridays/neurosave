@@ -110,6 +110,79 @@ async def send_email(
     return str(result.get("id", ""))
 
 
+def _extract_message_meta(msg: dict[str, Any], is_reply: bool = False) -> dict[str, Any]:
+    headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
+    return {
+        "id": msg.get("id", ""),
+        "subject": headers.get("Subject") or "(без темы)",
+        "from_": headers.get("From") or "",
+        "to": headers.get("To") or "",
+        "date": headers.get("Date") or "",
+        "snippet": msg.get("snippet", ""),
+        "is_reply": is_reply or bool(headers.get("In-Reply-To")),
+    }
+
+
+@beartype
+async def list_threads(service: Any, max_results: int = 20) -> list[dict[str, Any]]:
+    """List recent sent and received messages."""
+    messages: list[dict[str, Any]] = []
+    fetch_fields = ["Subject", "To", "From", "Date", "In-Reply-To"]
+
+    for query in ("in:sent", "in:inbox"):
+        try:
+            result: dict[str, Any] = service.users().messages().list(
+                userId="me", q=query, maxResults=max_results
+            ).execute()
+            for msg_ref in result.get("messages", []):
+                details: dict[str, Any] = service.users().messages().get(
+                    userId="me",
+                    id=msg_ref["id"],
+                    format="metadata",
+                    metadataHeaders=fetch_fields,
+                ).execute()
+                is_reply = query == "in:inbox"
+                messages.append(_extract_message_meta(details, is_reply=is_reply))
+        except Exception as exc:
+            logger.warning("Gmail list_threads error (query=%s): %s", query, exc)
+
+    messages.sort(key=lambda m: m.get("date", ""), reverse=True)
+    return messages[:max_results]
+
+
+@beartype
+async def get_history_since(service: Any, start_history_id: str) -> list[dict[str, Any]]:
+    """Return new messages since the given Gmail historyId (RECEIVE type only)."""
+    try:
+        resp: dict[str, Any] = service.users().history().list(
+            userId="me",
+            startHistoryId=start_history_id,
+            historyTypes=["messageAdded"],
+            labelId="INBOX",
+        ).execute()
+    except Exception as exc:
+        logger.warning("Gmail get_history_since failed: %s", exc)
+        return []
+
+    messages: list[dict[str, Any]] = []
+    for record in resp.get("history", []):
+        for added in record.get("messagesAdded", []):
+            msg_id = added.get("message", {}).get("id")
+            if not msg_id:
+                continue
+            try:
+                details: dict[str, Any] = service.users().messages().get(
+                    userId="me",
+                    id=msg_id,
+                    format="metadata",
+                    metadataHeaders=["Subject", "From", "Date", "In-Reply-To"],
+                ).execute()
+                messages.append(_extract_message_meta(details, is_reply=True))
+            except Exception as exc:
+                logger.warning("Gmail get_message detail failed for %s: %s", msg_id, exc)
+    return messages
+
+
 @beartype
 async def get_gmail_address(owner_id: int, session: AsyncSession) -> str | None:
     """Return the authenticated Gmail address for this owner, or None."""

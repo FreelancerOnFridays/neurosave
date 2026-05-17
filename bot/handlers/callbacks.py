@@ -19,6 +19,25 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+@router.callback_query(F.data.startswith("task_cancel:"))
+async def handle_task_cancel(
+    query: CallbackQuery, session: AsyncSession
+) -> None:
+    if query.data is None:
+        await query.answer()
+        return
+    task_id = int(query.data.split(":")[1])
+    task = await task_repo.cancel_task(session, task_id)
+    if task:
+        await query.answer("Задача отменена")
+        if isinstance(query.message, TgMessage):
+            await query.message.edit_text(
+                f"❌ Задача отменена: {task.description}", reply_markup=None
+            )
+    else:
+        await query.answer(t("task_not_found"))
+
+
 @router.callback_query(F.data.startswith("task_done:"))
 async def handle_task_done(
     query: CallbackQuery, session: AsyncSession
@@ -213,6 +232,124 @@ async def handle_pick_alias(
                 f"💾 Псевдоним сохранён: «{alias}» = {tg_name}.\n"
                 f"Теперь можете обращаться к этому контакту по имени «{alias}»."
             )
+
+
+@router.callback_query(F.data.startswith("email_send:"))
+async def handle_email_send(
+    query: CallbackQuery, bot: Bot, session: AsyncSession
+) -> None:
+    from bot.handlers.direct_messages import _pending_email
+    from services import gmail as gmail_svc
+
+    await query.answer()
+    if query.from_user is None or query.data is None:
+        return
+    owner_id = int(query.data.split(":")[1])
+    if query.from_user.id != owner_id:
+        return
+
+    pending = _pending_email.get(owner_id)
+    if pending is None or pending.get("status") != "preview":
+        if isinstance(query.message, TgMessage):
+            await query.message.edit_reply_markup(reply_markup=None)
+        return
+
+    to = str(pending.get("to") or "")
+    subject = str(pending.get("subject") or "")
+    body = str(pending.get("body") or "")
+    has_attachment = bool(pending.get("has_attachment"))
+    queued_file_id: str | None = pending.get("queued_file_id")  # type: ignore[assignment]
+    queued_filename = str(pending.get("queued_filename") or "attachment")
+    queued_mime = str(pending.get("queued_mime") or "application/octet-stream")
+
+    gmail_service = await gmail_svc.get_gmail_service(owner_id, session)
+    if gmail_service is None:
+        _pending_email.pop(owner_id, None)
+        if isinstance(query.message, TgMessage):
+            await query.message.edit_text("❌ Gmail не подключён.", reply_markup=None)
+        return
+
+    if queued_file_id:
+        try:
+            buf = await bot.download(queued_file_id)
+            if buf is None:
+                raise RuntimeError("empty buffer")
+            file_bytes = buf.read()
+        except Exception:
+            logger.exception("Failed to download queued attachment for owner %d", owner_id)
+            if isinstance(query.message, TgMessage):
+                await query.message.edit_text("❌ Не удалось скачать файл.", reply_markup=None)
+            return
+        _pending_email.pop(owner_id, None)
+        try:
+            await gmail_svc.send_email(
+                gmail_service, to=[to], subject=subject, body=body,
+                attachments=[(queued_filename, file_bytes, queued_mime)],
+            )
+            if isinstance(query.message, TgMessage):
+                await query.message.edit_text(
+                    f"✅ Письмо с вложением <b>{queued_filename}</b> отправлено на <b>{to}</b>",
+                    parse_mode="HTML", reply_markup=None,
+                )
+        except Exception as exc:
+            logger.exception("Gmail send with attachment failed: %s", exc)
+            if isinstance(query.message, TgMessage):
+                await query.message.edit_text("❌ Не удалось отправить письмо.", reply_markup=None)
+
+    elif has_attachment:
+        # No queued file yet — ask user to attach one now
+        _pending_email[owner_id] = {"to": to, "subject": subject, "body": body}
+        if isinstance(query.message, TgMessage):
+            await query.message.edit_text(
+                f"📎 Прикрепи файл следующим сообщением. Письмо будет отправлено на {to}.",
+                reply_markup=None,
+            )
+
+    else:
+        _pending_email.pop(owner_id, None)
+        try:
+            await gmail_svc.send_email(gmail_service, to=[to], subject=subject, body=body)
+            if isinstance(query.message, TgMessage):
+                await query.message.edit_text(
+                    f"✅ Письмо отправлено на <b>{to}</b>\n"
+                    f"<b>Тема:</b> {subject}\n\n{body[:300]}{'…' if len(body) > 300 else ''}",
+                    parse_mode="HTML", reply_markup=None,
+                )
+        except Exception as exc:
+            logger.exception("Gmail send failed: %s", exc)
+            if isinstance(query.message, TgMessage):
+                await query.message.edit_text("❌ Не удалось отправить письмо.", reply_markup=None)
+
+
+@router.callback_query(F.data.startswith("email_cancel:"))
+async def handle_email_cancel(query: CallbackQuery) -> None:
+    from bot.handlers.direct_messages import _pending_email
+
+    await query.answer("Отменено")
+    if query.from_user is None or query.data is None:
+        return
+    owner_id = int(query.data.split(":")[1])
+    _pending_email.pop(owner_id, None)
+    if isinstance(query.message, TgMessage):
+        await query.message.edit_text("❌ Отправка отменена.", reply_markup=None)
+
+
+@router.callback_query(F.data.startswith("email_edit:"))
+async def handle_email_edit(query: CallbackQuery) -> None:
+    from bot.handlers.direct_messages import _pending_email
+
+    await query.answer()
+    if query.from_user is None or query.data is None:
+        return
+    owner_id = int(query.data.split(":")[1])
+    pending = _pending_email.get(owner_id)
+    if pending is None or pending.get("status") != "preview":
+        if isinstance(query.message, TgMessage):
+            await query.message.edit_reply_markup(reply_markup=None)
+        return
+    pending["status"] = "edit"
+    if isinstance(query.message, TgMessage):
+        await query.message.edit_text("✏️ Введи новый текст письма:", reply_markup=None)
 
 
 @router.callback_query()

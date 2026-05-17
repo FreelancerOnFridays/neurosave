@@ -118,6 +118,23 @@ const ru = {
   gdocs_create: "Создать",
   calendar_upcoming: "Ближайшие события",
   calendar_no_events: "Нет событий на следующие 7 дней",
+
+  gmail_recent_threads: "Последние письма",
+  gmail_inbox_reply: "Входящий ответ",
+  gmail_compose: "Написать письмо",
+  gmail_no_threads: "Нет писем",
+
+  notion_folders_settings: "Настройка папок",
+  notion_folders_save: "Сохранить названия",
+  notion_folders_saved: "Сохранено",
+
+  contacts_all: "Все контакты",
+  contacts_bot_name: "Имя для бота",
+  contacts_bot_name_hint: "Как называть этого человека в командах",
+  contacts_email: "Email",
+  contacts_save: "Сохранить",
+  contacts_search: "Поиск по имени",
+  contacts_no_email: "Нет email",
 } as const;
 
 const en: Record<keyof typeof ru, string> = {
@@ -238,6 +255,23 @@ const en: Record<keyof typeof ru, string> = {
   gdocs_create: "Create",
   calendar_upcoming: "Upcoming events",
   calendar_no_events: "No events in the next 7 days",
+
+  gmail_recent_threads: "Recent emails",
+  gmail_inbox_reply: "Incoming reply",
+  gmail_compose: "Compose",
+  gmail_no_threads: "No emails",
+
+  notion_folders_settings: "Folder settings",
+  notion_folders_save: "Save names",
+  notion_folders_saved: "Saved",
+
+  contacts_all: "All contacts",
+  contacts_bot_name: "Bot name",
+  contacts_bot_name_hint: "How to refer to this person in commands",
+  contacts_email: "Email",
+  contacts_save: "Save",
+  contacts_search: "Search by name",
+  contacts_no_email: "No email",
 };
 
 const strings = { ru, en } as const;

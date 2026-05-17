@@ -6,18 +6,20 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { NotionWorkspace } from "@/components/integrations/NotionWorkspace";
 import { GoogleDocsWorkspace } from "@/components/integrations/GoogleDocsWorkspace";
 import { CalendarWorkspace } from "@/components/integrations/CalendarWorkspace";
+import { GmailWorkspace } from "@/components/integrations/GmailWorkspace";
 import { api } from "@/lib/api";
 import { useLang } from "@/contexts/LanguageContext";
 import type { IntegrationsStatus } from "@/lib/types";
 
 const WORKSPACE_KEY = "integrations_active_pill";
 
-type PillId = "notion" | "google_docs" | "google_calendar";
+type PillId = "notion" | "google_docs" | "google_calendar" | "gmail";
 
 const ALL_PILLS: { id: PillId; label: string; icon: string }[] = [
   { id: "notion", label: "Notion", icon: "📝" },
   { id: "google_docs", label: "Docs & Sheets", icon: "📄" },
   { id: "google_calendar", label: "Calendar", icon: "📅" },
+  { id: "gmail", label: "Gmail", icon: "✉️" },
 ];
 
 function connectedPills(status: IntegrationsStatus) {
@@ -25,6 +27,7 @@ function connectedPills(status: IntegrationsStatus) {
     if (p.id === "notion") return status.notion.connected;
     if (p.id === "google_docs") return status.google_docs.connected;
     if (p.id === "google_calendar") return status.google_calendar.connected;
+    if (p.id === "gmail") return status.gmail.connected;
     return false;
   });
 }
@@ -103,6 +106,7 @@ export default function IntegrationsPage() {
               {active === "notion" && <NotionWorkspace />}
               {active === "google_docs" && <GoogleDocsWorkspace />}
               {active === "google_calendar" && <CalendarWorkspace />}
+              {active === "gmail" && <GmailWorkspace />}
             </div>
           </>
         )}

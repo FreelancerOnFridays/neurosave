@@ -178,3 +178,11 @@ async def delete_task(session: AsyncSession, task_id: int) -> bool:
         return False
     await session.delete(task)
     return True
+
+
+@beartype
+async def cancel_task(session: AsyncSession, task_id: int) -> Task | None:
+    task = await session.get(Task, task_id)
+    if task:
+        task.status = TaskStatus.cancelled
+    return task

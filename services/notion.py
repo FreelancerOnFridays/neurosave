@@ -134,7 +134,9 @@ async def ensure_section_page(token: str, owner_id: int, action: str, session: A
         return existing
 
     root_id = await ensure_root_page(token, owner_id, session)
-    emoji, name = NOTION_SECTIONS.get(action, ("📄", action))
+    emoji_default, name_default = NOTION_SECTIONS.get(action, ("📄", action))
+    custom_name = await cfg_repo.get_config(session, owner_id, f"notion_section_label_{action}")
+    emoji, name = emoji_default, custom_name or name_default
 
     notion = AsyncClient(auth=token)
     try:

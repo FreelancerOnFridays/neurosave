@@ -53,6 +53,7 @@ export interface Contact {
   id: number;
   user_id: number;
   name: string | null;
+  saved_name: string | null;
   username: string | null;
   phone: string | null;
   email: string | null;
@@ -60,6 +61,15 @@ export interface Contact {
   synced_from: "telethon" | "manual" | null;
   last_seen: string | null;
   last_synced_at: string | null;
+}
+
+export interface GmailThread {
+  id: string;
+  subject: string;
+  from_: string;
+  snippet: string;
+  date: string;
+  is_reply: boolean;
 }
 
 export interface ContactSyncStatus {

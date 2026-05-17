@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card } from "@/components/ui/Card";
 import { useLang } from "@/contexts/LanguageContext";
@@ -39,6 +40,7 @@ export function ContactsSection() {
   const { status, contacts, folders, syncing, syncingFolder, syncAll, syncFolder, mutateStatus } =
     useContacts();
 
+  const router = useRouter();
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [inputVal, setInputVal] = useState("");
   const [loading, setLoading] = useState(false);
@@ -252,6 +254,17 @@ export function ContactsSection() {
               <p className="text-xs text-tg-hint mt-3">{t("contacts_no_folders")}</p>
             )}
           </AnimatePresence>
+
+          {(status?.contact_count ?? 0) > 0 && (
+            <button
+              onClick={() => router.push("/contacts")}
+              className="mt-4 w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-colors"
+              style={{ background: "var(--tg-theme-secondary-bg-color, #f2f2f7)" }}
+            >
+              <span className="text-tg-text">👥 {t("contacts_all")}</span>
+              <span className="text-tg-hint">›</span>
+            </button>
+          )}
         </>
       )}
     </Card>

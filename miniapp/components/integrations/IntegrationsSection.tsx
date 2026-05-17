@@ -3,7 +3,6 @@
 import useSWR from "swr";
 import { Card } from "@/components/ui/Card";
 import { IntegrationCard } from "./IntegrationCard";
-import { NotionQuickCapture } from "./NotionQuickCapture";
 import { api } from "@/lib/api";
 import { useLang } from "@/contexts/LanguageContext";
 import type { IntegrationsStatus } from "@/lib/types";
@@ -51,7 +50,6 @@ export function IntegrationsSection() {
           onDisconnect={api.integrations.notionDisconnect}
           onRefresh={() => mutate()}
         />
-        {data.notion.connected && <NotionQuickCapture />}
       </div>
       <div className="mt-3">
         <IntegrationCard

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import func as sql_func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,7 @@ class ContactOut(BaseModel):
     id: int
     user_id: int
     name: str | None
+    saved_name: str | None = None
     username: str | None
     phone: str | None
     email: str | None
@@ -32,6 +33,11 @@ class ContactOut(BaseModel):
     is_vip: bool = False
 
     model_config = {"from_attributes": True}
+
+
+class ContactPatchIn(BaseModel):
+    saved_name: str | None = None
+    email: str | None = None
 
 
 class SyncStatus(BaseModel):
@@ -101,6 +107,72 @@ async def get_folders(
 
     folders = await list_folders(client)
     return [FolderOut(name=name) for name in folders]
+
+
+@router.patch("/{user_id}", response_model=ContactOut)
+async def update_contact(
+    user_id: int,
+    body: ContactPatchIn,
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Contact:
+    from db.repositories import contacts as contact_repo
+    from db.repositories import integration_configs as cfg_repo
+
+    contact = await contact_repo.get_contact(session, owner_id, user_id)
+    if contact is None:
+        raise HTTPException(status_code=404, detail="Contact not found")
+
+    if body.saved_name is not None:
+        contact.saved_name = body.saved_name.strip() or None
+    if body.email is not None:
+        contact.email = body.email.strip() or None
+        if contact.saved_name or contact.name:
+            name_key = (contact.saved_name or contact.name or "").lower()
+            await cfg_repo.set_config(session, owner_id, f"email_for:{name_key}", contact.email or "")
+    await session.commit()
+    return contact
+
+
+@router.get("/{user_id}/avatar")
+async def get_contact_avatar(
+    user_id: int,
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    import httpx
+    from config import settings as app_settings
+
+    token = app_settings.bot_token
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            photos_resp = await client.get(
+                f"https://api.telegram.org/bot{token}/getUserProfilePhotos",
+                params={"user_id": user_id, "limit": 1},
+            )
+            photos_data = photos_resp.json()
+            photos = photos_data.get("result", {}).get("photos", [])
+            if not photos:
+                raise HTTPException(status_code=404, detail="No avatar")
+            file_id = photos[0][-1]["file_id"]
+
+            file_resp = await client.get(
+                f"https://api.telegram.org/bot{token}/getFile",
+                params={"file_id": file_id},
+            )
+            file_path = file_resp.json().get("result", {}).get("file_path")
+            if not file_path:
+                raise HTTPException(status_code=404, detail="No avatar")
+
+            img_resp = await client.get(
+                f"https://api.telegram.org/file/bot{token}/{file_path}"
+            )
+            return Response(content=img_resp.content, media_type="image/jpeg")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Avatar fetch failed for user %d: %s", user_id, exc)
+        raise HTTPException(status_code=404, detail="Avatar unavailable")
 
 
 async def _run_sync(owner_id: int, session_str: str | None) -> None:
