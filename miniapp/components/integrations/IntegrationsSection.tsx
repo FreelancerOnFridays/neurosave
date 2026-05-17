@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import useSWR from "swr";
 import { Card } from "@/components/ui/Card";
 import { IntegrationCard } from "./IntegrationCard";
@@ -10,16 +9,22 @@ import type { IntegrationsStatus } from "@/lib/types";
 
 export function IntegrationsSection() {
   const { t } = useLang();
-  const [showUris, setShowUris] = useState(false);
   const { data, mutate } = useSWR<IntegrationsStatus>(
     "/api/integrations/status",
     api.integrations.status,
     { refreshInterval: 10_000 }
   );
-  const { data: uriData } = useSWR(
-    showUris ? "/api/integrations/redirect-uris" : null,
-    api.integrations.redirectUris
+  const { data: notifData, mutate: mutateNotif } = useSWR(
+    data?.gmail.connected ? "/api/integrations/gmail/notifications" : null,
+    api.integrations.gmailNotifications
   );
+
+  async function toggleGmailNotifications() {
+    if (!notifData) return;
+    const next = !notifData.enabled;
+    await api.integrations.setGmailNotifications(next);
+    await mutateNotif({ enabled: next }, false);
+  }
 
   if (!data) return null;
 
@@ -45,6 +50,45 @@ export function IntegrationsSection() {
           onDisconnect={api.integrations.gmailDisconnect}
           onRefresh={() => mutate()}
         />
+        {data.gmail.connected && notifData !== undefined && (
+          <div className="mt-3 mx-1 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-sm text-tg-text">{t("gmail_notifications_toggle")}</p>
+              <p className="text-xs text-tg-hint mt-0.5 leading-snug">{t("gmail_notifications_hint")}</p>
+            </div>
+            <button
+              onClick={toggleGmailNotifications}
+              role="switch"
+              aria-checked={notifData.enabled}
+              style={{
+                flexShrink: 0,
+                width: 51,
+                height: 31,
+                borderRadius: 999,
+                padding: 2,
+                background: notifData.enabled ? "var(--tg-theme-button-color, #2AABEE)" : "rgba(120,120,128,0.32)",
+                border: "none",
+                cursor: "pointer",
+                transition: "background 0.2s",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <span
+                style={{
+                  display: "block",
+                  width: 27,
+                  height: 27,
+                  borderRadius: "50%",
+                  background: "#fff",
+                  boxShadow: "0 2px 4px rgba(0,0,0,0.3)",
+                  transform: notifData.enabled ? "translateX(20px)" : "translateX(0)",
+                  transition: "transform 0.2s",
+                }}
+              />
+            </button>
+          </div>
+        )}
       </div>
       <div className="mt-3">
         <IntegrationCard
@@ -56,36 +100,6 @@ export function IntegrationsSection() {
           onDisconnect={api.integrations.googleDocsDisconnect}
           onRefresh={() => mutate()}
         />
-      </div>
-
-      {/* Redirect URI helper for Google OAuth */}
-      <div className="mt-4 pt-3 border-t border-tg-hint/10">
-        <button
-          onClick={() => setShowUris((v) => !v)}
-          className="flex items-center gap-1.5 text-xs text-tg-hint hover:text-tg-text transition-colors"
-        >
-          <span>{showUris ? "▲" : "▼"}</span>
-          <span>{t("gmail_redirect_hint").split(":")[0]}</span>
-        </button>
-        {showUris && (
-          <div className="mt-2 space-y-1">
-            <p className="text-xs text-tg-hint leading-relaxed">
-              {t("gmail_redirect_hint")}
-            </p>
-            {uriData?.redirect_uris.map((uri) => (
-              <div
-                key={uri}
-                className="px-2 py-1.5 rounded-lg text-xs font-mono break-all select-all"
-                style={{ background: "var(--tg-theme-secondary-bg-color, #f2f2f7)" }}
-              >
-                {uri}
-              </div>
-            ))}
-            {!uriData && (
-              <p className="text-xs text-tg-hint italic">Загрузка…</p>
-            )}
-          </div>
-        )}
       </div>
     </Card>
   );

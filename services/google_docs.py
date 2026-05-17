@@ -183,6 +183,24 @@ async def find_or_create_doc(
 
 
 @beartype
+async def read_doc_content(creds: Any, doc_id: str) -> str:
+    """Return plain text content of a Google Doc."""
+    from googleapiclient.discovery import build
+
+    docs = build("docs", "v1", credentials=creds, cache_discovery=False)
+    doc: dict[str, Any] = docs.documents().get(documentId=doc_id).execute()
+    parts: list[str] = []
+    for element in doc.get("body", {}).get("content", []):
+        para = element.get("paragraph")
+        if para:
+            for pe in para.get("elements", []):
+                text = pe.get("textRun", {}).get("content", "")
+                if text:
+                    parts.append(text)
+    return "".join(parts).strip()
+
+
+@beartype
 async def list_drive_files(creds: Any, folder_id: str, limit: int = 10) -> list[dict[str, Any]]:
     from googleapiclient.discovery import build
 

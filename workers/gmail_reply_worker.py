@@ -85,6 +85,16 @@ async def check_gmail_replies(bot: Bot) -> None:
             except Exception:
                 new_history_id = ""
 
+            # Check if owner has notifications enabled (default: on)
+            async with session_factory() as notif_sess:
+                notif_val = await cfg_repo.get_config(notif_sess, owner_id, "gmail_notifications_enabled")
+            if notif_val == "0":
+                if new_history_id:
+                    async with session_factory() as session:
+                        async with session.begin():
+                            await cfg_repo.set_config(session, owner_id, _KEY, new_history_id)
+                continue
+
             for msg in messages:
                 # Only forward actual human replies (must have In-Reply-To header)
                 if not msg.get("is_reply"):

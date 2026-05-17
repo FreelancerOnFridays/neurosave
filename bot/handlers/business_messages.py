@@ -5,8 +5,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Coroutine
 
-from aiogram import Bot, Router
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram import Bot, F, Router
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config_store import get_language, get_timezone, set_business_connection_id, t
@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 _bg_tasks: set[asyncio.Task[None]] = set()
+
+# task_id → {chat_id, bcid, bc_msg_id, dm_chat_id, dm_msg_id}
+_bc_cancel_store: dict[int, dict[str, object]] = {}
 
 _REMIND_KEYWORDS = {"напомни", "remind", "напоминание", "reminder", "поставь напомни"}
 
@@ -310,7 +313,7 @@ async def handle_business_message(
     is_private_business_chat = (
         message.chat.type == "private" and message.chat.id != settings.owner_chat_id
     )
-    await task_repo.create_task(
+    new_task = await task_repo.create_task(
         session,
         owner_id=settings.owner_chat_id,
         chat_id=message.chat.id,
@@ -323,32 +326,112 @@ async def handle_business_message(
         business_connection_id=message.business_connection_id,
     )
 
-    _fire(
-        _send_and_delete(
-            bot=bot,
-            chat_id=message.chat.id,
-            text=t("task_saved"),
-            business_connection_id=message.business_connection_id,
-        )
-    )
+    _fire(_notify_task_created(
+        bot=bot,
+        task_id=new_task.id,
+        description=new_task.description,
+        assignee_name=new_task.assignee_name,
+        deadline=new_task.deadline,
+        chat_id=message.chat.id,
+        bcid=message.business_connection_id,
+        owner_id=settings.owner_chat_id,
+    ))
 
-    # Send cancellable notification to owner's bot DM
-    owner_chat_id = settings.owner_chat_id
-    task_text = f"📝 <b>Задача добавлена</b>\n{new_task.description}"
-    if new_task.assignee_name:
-        task_text += f"\n👤 {new_task.assignee_name}"
-    if new_task.deadline:
-        task_text += f"\n📅 {new_task.deadline.strftime('%d.%m %H:%M')}"
-    _fire(
-        bot.send_message(
-            chat_id=owner_chat_id,
-            text=task_text,
-            parse_mode="HTML",
+
+async def _notify_task_created(
+    bot: Bot,
+    task_id: int,
+    description: str,
+    assignee_name: str | None,
+    deadline: "datetime | None",
+    chat_id: int,
+    bcid: str | None,
+    owner_id: int,
+) -> None:
+    """Send task notification in business chat + owner DM, store IDs for cross-cancel."""
+    # ── Business chat: inline ❌ button ───────────────────────────────────────
+    bc_msg_id: int | None = None
+    try:
+        bc_sent = await bot.send_message(
+            chat_id=chat_id,
+            text="📝 Задача добавлена",
+            business_connection_id=bcid,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(
-                    text="❌ Отменить задачу",
-                    callback_data=f"task_cancel:{new_task.id}",
-                )
+                InlineKeyboardButton(text="❌ Отменить", callback_data=f"bc_cancel:{task_id}")
             ]]),
         )
-    )
+        bc_msg_id = bc_sent.message_id
+    except Exception:
+        logger.warning("Could not send business chat task notif to chat %d", chat_id)
+
+    # ── Owner DM: inline ❌ button ────────────────────────────────────────────
+    dm_text = f"📝 <b>Задача добавлена</b>\n{description}"
+    if assignee_name:
+        dm_text += f"\n👤 {assignee_name}"
+    if deadline:
+        dm_text += f"\n📅 {deadline.strftime('%d.%m %H:%M')}"
+    dm_msg_id: int | None = None
+    try:
+        dm_sent = await bot.send_message(
+            chat_id=owner_id,
+            text=dm_text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="❌ Отменить задачу", callback_data=f"task_cancel:{task_id}")
+            ]]),
+        )
+        dm_msg_id = dm_sent.message_id
+    except Exception:
+        logger.warning("Could not send DM task notif to owner %d", owner_id)
+
+    # Store for cross-cancellation
+    _bc_cancel_store[task_id] = {
+        "chat_id": chat_id,
+        "bcid": bcid,
+        "bc_msg_id": bc_msg_id,
+        "dm_chat_id": owner_id,
+        "dm_msg_id": dm_msg_id,
+    }
+
+
+@router.callback_query(F.data.startswith("bc_cancel:"))
+async def handle_bc_cancel(
+    query: CallbackQuery, session: AsyncSession
+) -> None:
+    """User tapped ❌ on the business chat task notification."""
+    if query.data is None:
+        await query.answer()
+        return
+
+    task_id = int(query.data.split(":")[1])
+    task = await task_repo.cancel_task(session, task_id)
+    entry = _bc_cancel_store.pop(task_id, None)
+
+    if not task:
+        await query.answer("Задача уже отменена")
+        return
+
+    await query.answer("Задача отменена")
+
+    # Edit the business chat message to show cancellation
+    if isinstance(query.message, Message):
+        try:
+            await query.message.edit_text("❌ Задача отменена", reply_markup=None)
+        except Exception:
+            pass
+
+    # Sync: update the DM notification (remove button, show cancelled)
+    if entry:
+        dm_chat_id = entry.get("dm_chat_id")
+        dm_msg_id = entry.get("dm_msg_id")
+        if dm_chat_id and dm_msg_id:
+            try:
+                await query.bot.edit_message_text(
+                    chat_id=int(dm_chat_id),
+                    message_id=int(dm_msg_id),
+                    text=f"❌ <b>Задача отменена</b>\n{task.description}",
+                    parse_mode="HTML",
+                    reply_markup=None,
+                )
+            except Exception:
+                pass

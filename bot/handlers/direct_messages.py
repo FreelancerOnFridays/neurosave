@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re as _re
 from datetime import datetime, timezone
 from typing import Any, Coroutine
 from zoneinfo import ZoneInfo
@@ -525,7 +526,6 @@ async def _process_owner_text(
 
     # ── Email ─────────────────────────────────────────────────────────────────
     if parsed.is_email and parsed.recipients:
-        import re as _re
         from services import gmail as gmail_svc
         from services.ai import generate_dispatch_message
 
@@ -583,11 +583,6 @@ async def _process_owner_text(
             message, owner_id, email_addr, subject, body,
             has_attachment=bool(parsed.email_has_attachment),
         )
-        return
-
-    # ── Notion (integration removed) ─────────────────────────────────────────
-    if parsed.is_notion:
-        await message.answer("ℹ️ Интеграция с Notion отключена.")
         return
 
     # ── Google Docs / Sheets ──────────────────────────────────────────────────
@@ -773,7 +768,13 @@ async def _process_owner_text(
                 await message.answer("Не нашёл такое напоминание. Используйте /reminders чтобы увидеть список.")
             return
 
-    # ── Semantic search fallback ──────────────────────────────────────────────
+    # ── Semantic search — AI-detected or keyword-triggered ────────────────────
+    _SEARCH_KW = ("ищи ", "ищи,", "ищи.", "найди ", "найди,", "о чем ", "о чём ", "поищи ")
+    text_lower = text.lower()
+    keyword_search = any(text_lower.startswith(kw) or f" {kw}" in text_lower for kw in _SEARCH_KW)
+    if not parsed.is_search and not keyword_search:
+        return
+
     thinking = await message.answer("🔍 Ищу в истории переписок…")
     try:
         query_vec = await embed_text(text)
@@ -789,59 +790,49 @@ async def _process_owner_text(
         await thinking.edit_text("❌ Не удалось выполнить поиск.")
 
 
-async def _handle_notion(
-    message: Message,
-    parsed: "DispatchCommand",
-    owner_id: int,
-    session: AsyncSession,
-) -> None:
-    from services import notion as notion_svc
-    from services.ai import generate_meeting_notes
+_SHEETS_URL_RE = _re.compile(r"docs\.google\.com/spreadsheets/d/([a-zA-Z0-9_-]+)")
+_DOCS_URL_RE = _re.compile(r"docs\.google\.com/document/d/([a-zA-Z0-9_-]+)")
 
-    token = await notion_svc.get_notion_token(owner_id, session)
-    if token is None:
-        await message.answer(
-            "❌ Notion не подключён. Перейди в мини-приложение → Настройки → Интеграции → Notion."
-        )
-        return
+_SPREADSHEET_MIMES = {
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "text/csv",
+    "application/csv",
+    "text/comma-separated-values",
+}
+_SPREADSHEET_EXTS = {".csv", ".xlsx", ".xls"}
 
-    title = parsed.notion_title or "Без названия"
-    content = parsed.notion_content or ""
-    action = parsed.notion_action or "capture"
 
-    try:
-        section_id = await notion_svc.ensure_section_page(token, owner_id, action, session)
+def _is_spreadsheet_file(filename: str, mime: str) -> bool:
+    ext = ("." + filename.rsplit(".", 1)[-1].lower()) if "." in filename else ""
+    return mime in _SPREADSHEET_MIMES or ext in _SPREADSHEET_EXTS
 
-        if action == "task":
-            page_id, url = await notion_svc.create_task_page(
-                token, section_id, title, parsed.notion_due_date_iso
-            )
-            due_note = f" (до {parsed.notion_due_date_iso[:10]})" if parsed.notion_due_date_iso else ""
-            text = f"✅ Задача в Notion: <b>{title}</b>{due_note}"
-            if url:
-                text += f'\n<a href="{url}">Открыть →</a>'
-            await message.answer(text, parse_mode="HTML")
 
-        elif action == "meeting_notes":
-            if not content:
-                content = f"Встреча: {title}"
-            structured = await generate_meeting_notes(content)
-            page_id, url = await notion_svc.create_page(token, section_id, title, structured)
-            text = f"✅ Встреча в Notion: <b>{title}</b>"
-            if url:
-                text += f'\n<a href="{url}">Открыть →</a>'
-            await message.answer(text, parse_mode="HTML")
-
-        else:  # capture
-            page_id, url = await notion_svc.create_page(token, section_id, title, content)
-            text = f"✅ Сохранено в Notion: <b>{title}</b>"
-            if url:
-                text += f'\n<a href="{url}">Открыть →</a>'
-            await message.answer(text, parse_mode="HTML")
-
-    except Exception as exc:
-        logger.exception("Notion create_page failed for owner %d: %s", owner_id, exc)
-        await message.answer("❌ Не удалось сохранить в Notion. Проверь подключение и права доступа.")
+def _parse_spreadsheet_bytes(data: bytes, filename: str, mime: str) -> str:
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if mime == "text/csv" or ext == "csv":
+        import csv, io
+        try:
+            reader = csv.reader(io.StringIO(data.decode("utf-8-sig", errors="replace")))
+            rows = list(reader)
+            return "\n".join("\t".join(r) for r in rows[:300])
+        except Exception:
+            return data.decode("utf-8-sig", errors="replace")[:14000]
+    if ext in ("xlsx", "xls") or "spreadsheet" in mime:
+        try:
+            import openpyxl, io as _io
+            wb = openpyxl.load_workbook(_io.BytesIO(data), read_only=True, data_only=True)
+            ws = wb.active
+            if ws is None:
+                return ""
+            rows_out: list[str] = []
+            for row in ws.iter_rows(max_row=300, values_only=True):
+                rows_out.append("\t".join("" if c is None else str(c) for c in row))
+            return "\n".join(rows_out)
+        except Exception as e:
+            logger.warning("openpyxl failed for %s: %s", filename, e)
+            return ""
+    return ""
 
 
 async def _handle_gdocs(
@@ -851,67 +842,126 @@ async def _handle_gdocs(
     session: AsyncSession,
 ) -> None:
     from services import google_docs as docs_svc, google_sheets as sheets_svc
+    from services.ai import analyze_document
+
+    # Create/edit requests — not supported yet
+    if parsed.gdocs_action == "unsupported":
+        await message.answer(
+            "⚙️ Создание и редактирование документов пока не поддерживается.\n"
+            "Я могу только <b>анализировать</b> таблицы и документы — отправь ссылку или файл.",
+            parse_mode="HTML",
+        )
+        return
+
+    # Resolve sheet/doc ID — URL takes priority over name lookup
+    raw_text = (parsed.gdocs_url or "") + " " + (message.text or "")
+    sheet_match = _SHEETS_URL_RE.search(raw_text)
+    doc_match = _DOCS_URL_RE.search(raw_text)
+
+    sheet_id: str | None = None
+    doc_id: str | None = None
+    open_url: str | None = None
+
+    if sheet_match:
+        sheet_id = sheet_match.group(1)
+        open_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
+    elif doc_match:
+        doc_id = doc_match.group(1)
+        open_url = f"https://docs.google.com/document/d/{doc_id}/edit"
+    elif parsed.gdocs_target_name:
+        name = parsed.gdocs_target_name
+        from services.google_sheets import find_sheet_id, _sheet_slug
+        sheet_id = await find_sheet_id(owner_id, _sheet_slug(name), session)
+        if sheet_id:
+            open_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
+        else:
+            from services.google_docs import find_doc_id, _doc_slug
+            doc_id = await find_doc_id(owner_id, _doc_slug(name), session)
+            if doc_id:
+                open_url = f"https://docs.google.com/document/d/{doc_id}/edit"
+
+    if not sheet_id and not doc_id:
+        await message.answer(
+            "❌ Не нашёл таблицу или документ. Отправь ссылку на Google Sheets/Docs или укажи название."
+        )
+        return
 
     creds = await docs_svc.get_gdocs_credentials(owner_id, session)
     if creds is None:
         await message.answer(
-            "❌ Google Docs не подключён. Перейди в мини-приложение → Настройки → Интеграции → Google Docs."
+            "❌ Google Docs не подключён. Перейди в Настройки → Интеграции → Google Docs."
         )
         return
 
-    action = parsed.gdocs_action or "create_doc"
-    name = parsed.gdocs_target_name or "Без названия"
+    question = parsed.gdocs_content or "Дай краткую сводку содержимого"
+    await message.answer("🔍 Читаю…")
 
     try:
-        if action in ("create_doc", "append_doc"):
-            doc_id, url = await docs_svc.find_or_create_doc(
-                creds, owner_id, name, parsed.gdocs_content or "", session
-            )
-            await session.commit()
-            text = f"✅ Документ: <b>{name}</b>"
-            if url:
-                text += f'\n<a href="{url}">Открыть →</a>'
-            await message.answer(text, parse_mode="HTML")
-
-        elif action == "create_sheet":
-            folder_id = await docs_svc.ensure_drive_folder(creds, owner_id, session)
-            sheet_id, url = await sheets_svc.create_spreadsheet(creds, folder_id, name)
-            from db.repositories import integration_configs as cfg_repo
-            from services.google_sheets import _sheet_slug
-            await cfg_repo.set_config(session, owner_id, f"gdocs_sheet:{_sheet_slug(name)}", sheet_id)
-            await session.commit()
-            text = f"✅ Таблица создана: <b>{name}</b>"
-            if url:
-                text += f'\n<a href="{url}">Открыть →</a>'
-            await message.answer(text, parse_mode="HTML")
-
-        elif action == "append_row":
-            sheet_id, url = await sheets_svc.find_or_create_sheet(creds, owner_id, name, session)
-            if parsed.gdocs_row_values:
-                url = await sheets_svc.append_row(creds, sheet_id, parsed.gdocs_row_values)
-            await session.commit()
-            text = f"✅ Строка добавлена в <b>{name}</b>"
-            if url:
-                text += f'\n<a href="{url}">Открыть →</a>'
-            await message.answer(text, parse_mode="HTML")
-
-        elif action == "read_sheet":
-            sheet_id, url = await sheets_svc.find_or_create_sheet(creds, owner_id, name, session)
-            rows = await sheets_svc.get_recent_rows(creds, sheet_id)
-            if rows:
-                formatted = "\n".join(" | ".join(r) for r in rows)
-                text = f"📊 <b>{name}</b> (последние записи):\n<pre>{formatted}</pre>"
-                if url:
-                    text += f'\n<a href="{url}">Открыть →</a>'
-            else:
-                text = f"📊 Таблица <b>{name}</b> пуста"
-                if url:
-                    text += f'\n<a href="{url}">Открыть →</a>'
-            await message.answer(text, parse_mode="HTML")
-
+        if sheet_id:
+            rows = await sheets_svc.read_full_sheet(creds, sheet_id)
+            if not rows:
+                await message.answer("📊 Таблица пустая.")
+                return
+            content = "\n".join("\t".join(r) for r in rows)
+            doc_type = "spreadsheet"
+        else:
+            assert doc_id
+            content = await docs_svc.read_doc_content(creds, doc_id)
+            if not content:
+                await message.answer("📄 Документ пустой.")
+                return
+            doc_type = "document"
     except Exception as exc:
-        logger.exception("Google Docs/Sheets operation failed for owner %d: %s", owner_id, exc)
-        await message.answer("❌ Не удалось выполнить операцию с Google Docs/Sheets.")
+        logger.exception("Google Docs/Sheets read failed for owner %d: %s", owner_id, exc)
+        await message.answer("❌ Не удалось прочитать документ. Проверь права доступа.")
+        return
+
+    try:
+        analysis = await analyze_document(content, question, doc_type)
+        text = f"📊 {analysis}"
+        if open_url:
+            text += f'\n\n<a href="{open_url}">Открыть →</a>'
+        await message.answer(text, parse_mode="HTML")
+    except Exception as exc:
+        logger.exception("Document analysis failed for owner %d: %s", owner_id, exc)
+        await message.answer("❌ Не удалось проанализировать.")
+
+
+async def _analyze_uploaded_file(
+    message: Message,
+    bot: "Bot",
+    owner_id: int,
+    file_id: str,
+    filename: str,
+    mime_type: str,
+) -> None:
+    from services.ai import analyze_document
+
+    question = message.caption or "Проанализируй содержимое, дай краткую сводку"
+    await message.answer("🔍 Читаю файл…")
+
+    try:
+        buf = await bot.download(file_id)
+        if buf is None:
+            await message.answer("❌ Не удалось скачать файл.")
+            return
+        data = buf.read()
+    except Exception:
+        logger.exception("Failed to download file for owner %d", owner_id)
+        await message.answer("❌ Не удалось скачать файл.")
+        return
+
+    content = _parse_spreadsheet_bytes(data, filename, mime_type)
+    if not content:
+        await message.answer("❌ Не удалось прочитать файл. Поддерживаются CSV и XLSX.")
+        return
+
+    try:
+        analysis = await analyze_document(content, question, "spreadsheet")
+        await message.answer(f"📊 {analysis}", parse_mode="HTML")
+    except Exception:
+        logger.exception("File analysis failed for owner %d", owner_id)
+        await message.answer("❌ Не удалось проанализировать файл.")
 
 
 async def _handle_pending_email_edit(
@@ -1020,6 +1070,14 @@ async def handle_owner_attachment(message: Message, bot: Bot, session: AsyncSess
         return
 
     pending = _pending_email.get(owner_id)
+
+    # Spreadsheet/CSV files → analysis (unless mid-email-attachment flow)
+    if (
+        _is_spreadsheet_file(filename, mime_type)
+        and not (pending and pending.get("status") in ("attach", "preview"))
+    ):
+        await _analyze_uploaded_file(message, bot, owner_id, file_id, filename, mime_type)
+        return
 
     # User sent file + caption in one message (no prior pending email)
     if (pending is None or "to" not in pending) and message.caption:

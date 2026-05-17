@@ -126,6 +126,8 @@ const ru = {
   gmail_sent: "Отправлено ✅",
   gmail_attachments: "Вложения",
   gmail_redirect_hint: "Для подключения Google добавьте эти URI в Google Cloud Console:",
+  gmail_notifications_toggle: "Уведомления о входящих письмах",
+  gmail_notifications_hint: "Бот будет присылать уведомления когда вам ответят на письмо",
 
   contacts_all: "Все контакты",
   contacts_bot_name: "Имя для бота",
@@ -262,6 +264,8 @@ const en: Record<keyof typeof ru, string> = {
   gmail_sent: "Sent ✅",
   gmail_attachments: "Attachments",
   gmail_redirect_hint: "To connect Google, add these URIs in Google Cloud Console:",
+  gmail_notifications_toggle: "Email reply notifications",
+  gmail_notifications_hint: "Bot will notify you when someone replies to your email",
 
   contacts_all: "All contacts",
   contacts_bot_name: "Bot name",

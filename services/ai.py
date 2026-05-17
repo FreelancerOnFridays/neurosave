@@ -92,6 +92,7 @@ class DispatchCommand(BaseModel):
     is_settings: bool = False
     is_ghost: bool = False
     is_email: bool = False
+    is_search: bool = False
     recipients: list[str] = []
     literal_message: str | None = None
     message_intent: str | None = None
@@ -114,18 +115,12 @@ class DispatchCommand(BaseModel):
     email_body_intent: str | None = None
     email_literal_body: str | None = None
     email_has_attachment: bool = False
-    # notion-specific fields
-    is_notion: bool = False
-    notion_action: str | None = None  # "capture" | "task" | "meeting_notes"
-    notion_title: str | None = None
-    notion_content: str | None = None
-    notion_due_date_iso: str | None = None
     # google docs/sheets fields
     is_gdocs: bool = False
-    gdocs_action: str | None = None  # "create_doc"|"append_doc"|"create_sheet"|"append_row"|"read_sheet"
+    gdocs_action: str | None = None  # "analyze_doc"|"analyze_sheet"|"unsupported"
+    gdocs_url: str | None = None     # Google Docs or Sheets URL, verbatim from message
     gdocs_target_name: str | None = None
-    gdocs_content: str | None = None
-    gdocs_row_values: list[str] | None = None
+    gdocs_content: str | None = None  # user's analysis question/intent
 
 
 class ReminderAction(BaseModel):
@@ -302,37 +297,29 @@ async def parse_dispatch_command(text: str, language: str = "ru", tz_name: str =
                     "  - email_literal_body: exact body text if owner provided it verbatim. Never rephrase.\n"
                     "  - email_body_intent: what to write if no exact body given. Null if literal_body is set.\n"
                     "  - email_has_attachment: true if owner mentions attaching a file/document/image.\n\n"
-                    "TYPE F — NOTION: the owner wants to save something to Notion.\n"
-                    "  Trigger phrases: 'запиши в ноушн', 'добавь в notion', 'заметка в ноушн', "
-                    "'сохрани в ноушн', 'save to notion', 'добавь в ноушн', 'создай заметку'.\n"
-                    "  Set is_notion=true, has_dispatch=false, is_reminder=false, is_email=false.\n"
-                    "  - notion_action: one of 'capture' (quick note/idea), 'task' (to-do item with optional deadline), "
-                    "'meeting_notes' (structured notes about a meeting/call).\n"
-                    "    Use 'task' when owner says 'задача', 'добавь задачу', 'to-do', 'сделать'.\n"
-                    "    Use 'meeting_notes' when owner says 'заметка о встрече', 'итоги встречи', 'конспект'.\n"
-                    "    Default to 'capture' for everything else.\n"
-                    "  - notion_title: short title for the entry (1 sentence max). Generate from context if not given.\n"
-                    "  - notion_content: full content/body to save. Include all relevant details from the message.\n"
-                    "  - notion_due_date_iso: for 'task' action only — deadline in ISO 8601 date format (YYYY-MM-DD). "
-                    "Null if no deadline mentioned.\n\n"
-                    "TYPE G — GOOGLE DOCS / SHEETS: the owner wants to work with Google Docs or Google Sheets.\n"
-                    "  Trigger phrases: 'создай документ', 'сохрани в документ', 'добавь в таблицу', "
-                    "'создай таблицу', 'покажи таблицу', 'записать в гугл документ', 'google doc', 'google sheet'.\n"
-                    "  Set is_gdocs=true, has_dispatch=false, is_reminder=false, is_notion=false, is_email=false.\n"
-                    "  - gdocs_action: one of:\n"
-                    "      'create_doc' — create a new Google Doc.\n"
-                    "      'append_doc' — add content to an existing doc (e.g. 'сохрани в документ X: текст').\n"
-                    "      'create_sheet' — create a new Google Spreadsheet.\n"
-                    "      'append_row' — add a row to a spreadsheet (e.g. 'добавь в таблицу расходов: кофе 200 руб').\n"
-                    "      'read_sheet' — show recent rows from a spreadsheet.\n"
-                    "  - gdocs_target_name: name of the document or spreadsheet (normalized: lowercase, spaces preserved).\n"
-                    "  - gdocs_content: text content for doc operations. Null for sheet operations.\n"
-                    "  - gdocs_row_values: for 'append_row' only — list of cell values as strings. "
-                    "Always add today's date as the FIRST value (YYYY-MM-DD format). "
-                    "Then split the data into logical cells. "
-                    "Example: 'кофе 200 руб' → ['2024-01-15', 'кофе', '200', 'руб'].\n\n"
+                    "TYPE G — GOOGLE DOCS / SHEETS: the owner mentions a Google Doc, Spreadsheet, or table.\n"
+                    "  Triggers (MUST set is_gdocs=true for any of these):\n"
+                    "    • message contains a docs.google.com URL\n"
+                    "    • owner says anything about a table/spreadsheet/document with words like "
+                    "'таблиц', 'документ', 'таблицу', 'документе', 'spreadsheet', 'doc', 'sheet'\n"
+                    "  Set is_gdocs=true, has_dispatch=false, is_reminder=false, is_email=false.\n"
+                    "  - gdocs_action:\n"
+                    "      'analyze_sheet' — owner wants to READ or ANALYZE a spreadsheet/table "
+                    "(says 'проанализируй', 'покажи', 'прочитай', 'что в таблице', 'сводка', 'analyze', 'read', 'show').\n"
+                    "      'analyze_doc' — owner wants to READ or ANALYZE a text document.\n"
+                    "      'unsupported' — owner wants to CREATE, EDIT, ADD TO, FILL, or MODIFY a doc/sheet "
+                    "(says 'создай', 'создать', 'заполни', 'добавь', 'измени', 'обнови', 'запиши в', 'create', 'edit', 'fill').\n"
+                    "  - gdocs_url: Google Docs or Sheets URL verbatim, if present. Null otherwise.\n"
+                    "  - gdocs_target_name: name of the doc/sheet if mentioned without URL. Null if URL given.\n"
+                    "  - gdocs_content: the user's analysis question. Null for 'unsupported' action.\n\n"
+                    "TYPE H — CONTEXT SEARCH: the owner is asking about what was said or happened in a past conversation.\n"
+                    "  Triggers: question about what a specific person said/replied/wrote, what was discussed, "
+                    "what happened, what was agreed on, what someone answered. "
+                    "Examples: 'что мне сегодня ответил Ростик', 'что писал Дима вчера', 'о чём говорили с Сашей', "
+                    "'что ответил клиент', 'что решили на встрече', 'что согласовали с командой'.\n"
+                    "  Set is_search=true, has_dispatch=false, is_reminder=false, is_gdocs=false, is_email=false.\n\n"
                     "If none of the above apply, set has_dispatch=false, is_reminder=false, is_settings=false, "
-                    "is_ghost=false, is_email=false, is_notion=false, is_gdocs=false."
+                    "is_ghost=false, is_email=false, is_gdocs=false, is_search=false."
                 ),
             },
             {"role": "user", "content": text},
@@ -715,3 +702,34 @@ async def answer_from_context(
         max_completion_tokens=400,
     )
     return (completion.choices[0].message.content or "").strip()
+
+
+@beartype
+async def analyze_document(content: str, question: str, doc_type: str = "spreadsheet") -> str:
+    """Analyze spreadsheet or document content and answer the user's question."""
+    type_label = "таблица (данные в формате TSV)" if doc_type == "spreadsheet" else "документ"
+    truncated = content[:14000]
+    if len(content) > 14000:
+        truncated += "\n\n[... содержимое обрезано из-за размера ...]"
+    client = _get_client()
+    completion = await client.chat.completions.create(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"Ты аналитик данных. Тебе передан {type_label}. "
+                    "Отвечай на русском языке, конкретно и по делу. "
+                    "Используй Telegram HTML-форматирование: <b>жирный</b> для ключевых чисел и выводов. "
+                    "Если данных не хватает для ответа — скажи об этом. "
+                    "Максимум 10 пунктов или 300 слов."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Содержимое:\n{truncated}\n\nВопрос: {question}",
+            },
+        ],
+        max_completion_tokens=700,
+    )
+    return (completion.choices[0].message.content or "Не удалось проанализировать.").strip()

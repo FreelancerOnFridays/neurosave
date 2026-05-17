@@ -21,7 +21,7 @@ router = Router()
 
 @router.callback_query(F.data.startswith("task_cancel:"))
 async def handle_task_cancel(
-    query: CallbackQuery, session: AsyncSession
+    query: CallbackQuery, bot: Bot, session: AsyncSession
 ) -> None:
     if query.data is None:
         await query.answer()
@@ -32,8 +32,30 @@ async def handle_task_cancel(
         await query.answer("Задача отменена")
         if isinstance(query.message, TgMessage):
             await query.message.edit_text(
-                f"❌ Задача отменена: {task.description}", reply_markup=None
+                f"❌ <b>Задача отменена</b>\n{task.description}",
+                parse_mode="HTML",
+                reply_markup=None,
             )
+        # Sync: delete the business chat notification if still present
+        from bot.handlers.business_messages import _bc_cancel_store
+        entry = _bc_cancel_store.pop(task_id, None)
+        if entry:
+            bcid = entry.get("bcid")
+            bc_msg_id = entry.get("bc_msg_id")
+            bc_chat_id = entry.get("chat_id")
+            if bcid and bc_msg_id:
+                try:
+                    await bot.delete_business_messages(
+                        business_connection_id=str(bcid),
+                        message_ids=[int(bc_msg_id)],
+                    )
+                except Exception:
+                    pass
+            elif bc_chat_id and bc_msg_id:
+                try:
+                    await bot.delete_message(chat_id=int(bc_chat_id), message_id=int(bc_msg_id))
+                except Exception:
+                    pass
     else:
         await query.answer(t("task_not_found"))
 

@@ -434,6 +434,40 @@ async def gmail_disconnect(
     await session.commit()
 
 
+_GMAIL_NOTIF_KEY = "gmail_notifications_enabled"
+
+
+class GmailNotificationsOut(BaseModel):
+    enabled: bool
+
+
+class GmailNotificationsIn(BaseModel):
+    enabled: bool
+
+
+@router.get("/gmail/notifications", response_model=GmailNotificationsOut)
+async def get_gmail_notifications(
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> GmailNotificationsOut:
+    from db.repositories import integration_configs as cfg_repo
+    val = await cfg_repo.get_config(session, owner_id, _GMAIL_NOTIF_KEY)
+    # Default to enabled (None means not set yet → treat as on)
+    return GmailNotificationsOut(enabled=val != "0")
+
+
+@router.put("/gmail/notifications", response_model=GmailNotificationsOut)
+async def set_gmail_notifications(
+    body: GmailNotificationsIn,
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> GmailNotificationsOut:
+    from db.repositories import integration_configs as cfg_repo
+    await cfg_repo.set_config(session, owner_id, _GMAIL_NOTIF_KEY, "1" if body.enabled else "0")
+    await session.commit()
+    return GmailNotificationsOut(enabled=body.enabled)
+
+
 # ── Notion ────────────────────────────────────────────────────────────────────
 
 # ── Google Docs & Sheets ──────────────────────────────────────────────────────

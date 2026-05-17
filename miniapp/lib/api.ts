@@ -138,6 +138,12 @@ export const api = {
         body: JSON.stringify(body),
       }),
     redirectUris: () => request<{ base_url: string; redirect_uris: string[] }>("/api/integrations/redirect-uris"),
+    gmailNotifications: () => request<{ enabled: boolean }>("/api/integrations/gmail/notifications"),
+    setGmailNotifications: (enabled: boolean) =>
+      request<{ enabled: boolean }>("/api/integrations/gmail/notifications", {
+        method: "PUT",
+        body: JSON.stringify({ enabled }),
+      }),
     googleDocsAuthUrl: () => request<{ url: string }>("/api/integrations/google-docs/auth-url"),
     googleDocsDisconnect: () => request<void>("/api/integrations/google-docs", { method: "DELETE" }),
     googleDocsFiles: () => request<DriveFile[]>("/api/integrations/google-docs/files"),
