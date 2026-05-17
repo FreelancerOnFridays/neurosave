@@ -27,6 +27,7 @@ class ContactOut(BaseModel):
     phone: str | None
     email: str | None
     team_label: str | None
+    labels: list[str] = []
     synced_from: str | None
     last_seen: datetime | None
     last_synced_at: datetime | None
@@ -38,6 +39,10 @@ class ContactOut(BaseModel):
 class ContactPatchIn(BaseModel):
     saved_name: str | None = None
     email: str | None = None
+
+
+class ContactLabelsIn(BaseModel):
+    labels: list[str]
 
 
 class SyncStatus(BaseModel):
@@ -107,6 +112,31 @@ async def get_folders(
 
     folders = await list_folders(client)
     return [FolderOut(name=name) for name in folders]
+
+
+@router.get("/labels", response_model=list[str])
+async def get_labels(
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> list[str]:
+    from db.repositories import contacts as contact_repo
+    return await contact_repo.get_all_labels(session, owner_id)
+
+
+@router.put("/{user_id}/labels", response_model=ContactOut)
+async def set_contact_labels(
+    user_id: int,
+    body: ContactLabelsIn,
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> Contact:
+    from db.repositories import contacts as contact_repo
+
+    contact = await contact_repo.set_contact_labels(session, owner_id, user_id, body.labels)
+    if contact is None:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    await session.commit()
+    return contact
 
 
 @router.patch("/{user_id}", response_model=ContactOut)

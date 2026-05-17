@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import useSWR from "swr";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SegmentedControl } from "@/components/tasks/SegmentedControl";
 import { FilterBar } from "@/components/tasks/FilterBar";
@@ -13,6 +14,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { useTasks } from "@/hooks/useTasks";
 import { useLang } from "@/contexts/LanguageContext";
 import { openTgProfile } from "@/lib/telegram";
+import { api } from "@/lib/api";
 import type { Task } from "@/lib/types";
 
 type TabMode = "personal" | "delegated";
@@ -177,14 +179,22 @@ export default function TasksPage() {
   const [tabIndex, setTabIndex] = useState(0);
   const [filterDate, setFilterDate] = useState<string | null>(null);
   const [hasReminder, setHasReminder] = useState<boolean | null>(null);
+  const [activeLabel, setActiveLabel] = useState<string | null>(null);
 
   const mode: TabMode = tabIndex === 0 ? "personal" : "delegated";
 
-  const { tasks, isLoading, error, updateStatus, setReminder, deleteReminder, nudge, deleteTask } = useTasks({
+  const { tasks: rawTasks, isLoading, error, updateStatus, setReminder, deleteReminder, nudge, deleteTask } = useTasks({
     type: mode,
     has_reminder: (mode === "personal" && hasReminder === true) ? true : undefined,
     date: filterDate ?? undefined,
   });
+
+  const { data: allLabels = [] } = useSWR<string[]>("/api/contacts/labels", api.contacts.getLabels);
+
+  // Filter by label (only meaningful for delegated tasks with team_label)
+  const tasks = activeLabel
+    ? rawTasks.filter((t) => t.team_label === activeLabel)
+    : rawTasks;
 
   const { t } = useLang();
 
@@ -204,6 +214,7 @@ export default function TasksPage() {
           setTabIndex(i);
           setHasReminder(null);
           setFilterDate(null);
+          setActiveLabel(null);
         }}
       />
 
@@ -214,6 +225,37 @@ export default function TasksPage() {
         onHasReminderChange={setHasReminder}
         showReminderFilter={mode === "personal"}
       />
+
+      {/* Label filter — shown for delegated tab when labels exist */}
+      {mode === "delegated" && allLabels.length > 0 && (
+        <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
+          <button
+            onClick={() => setActiveLabel(null)}
+            className="text-xs px-3 py-1.5 rounded-full whitespace-nowrap shrink-0 transition-colors"
+            style={
+              !activeLabel
+                ? { background: "var(--tg-theme-button-color,#007aff)", color: "var(--tg-theme-button-text-color,#fff)" }
+                : { background: "var(--tg-theme-secondary-bg-color,#f2f2f7)", color: "var(--tg-theme-hint-color,#8e8e93)" }
+            }
+          >
+            {t("labels_filter")}
+          </button>
+          {allLabels.map((label) => (
+            <button
+              key={label}
+              onClick={() => setActiveLabel(activeLabel === label ? null : label)}
+              className="text-xs px-3 py-1.5 rounded-full whitespace-nowrap shrink-0 transition-colors"
+              style={
+                activeLabel === label
+                  ? { background: "var(--tg-theme-button-color,#007aff)", color: "var(--tg-theme-button-text-color,#fff)" }
+                  : { background: "var(--tg-theme-secondary-bg-color,#f2f2f7)", color: "var(--tg-theme-hint-color,#8e8e93)" }
+              }
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <AnimatePresence mode="wait">
         <motion.div

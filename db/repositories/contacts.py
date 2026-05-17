@@ -160,6 +160,53 @@ async def find_contacts_by_label(
 
 
 @beartype
+async def set_contact_labels(
+    session: AsyncSession,
+    owner_id: int,
+    user_id: int,
+    labels: list[str],
+) -> Contact | None:
+    result = await session.execute(
+        select(Contact).where(Contact.owner_id == owner_id, Contact.user_id == user_id)
+    )
+    contact = result.scalar_one_or_none()
+    if contact:
+        contact.labels = labels
+    return contact
+
+
+@beartype
+async def get_all_labels(session: AsyncSession, owner_id: int) -> list[str]:
+    result = await session.execute(
+        select(Contact.labels).where(Contact.owner_id == owner_id)
+    )
+    all_labels: set[str] = set()
+    for (labels_arr,) in result.all():
+        if labels_arr:
+            all_labels.update(labels_arr)
+    return sorted(all_labels)
+
+
+@beartype
+async def add_label_to_contact(
+    session: AsyncSession,
+    owner_id: int,
+    user_id: int,
+    label: str,
+) -> Contact | None:
+    result = await session.execute(
+        select(Contact).where(Contact.owner_id == owner_id, Contact.user_id == user_id)
+    )
+    contact = result.scalar_one_or_none()
+    if contact:
+        existing = list(contact.labels or [])
+        if label not in existing:
+            existing.append(label)
+            contact.labels = existing
+    return contact
+
+
+@beartype
 async def get_recent_contacts(
     session: AsyncSession,
     owner_id: int,

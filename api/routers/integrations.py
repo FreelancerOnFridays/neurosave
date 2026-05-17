@@ -678,6 +678,36 @@ async def calendar_events(
     return result
 
 
+@router.get("/calendar/today", response_model=list[CalendarEventOut])
+async def calendar_today(
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> list[CalendarEventOut]:
+    from services import google_calendar as cal_svc
+    from db.repositories import user_settings as us_repo
+
+    service = await cal_svc.get_calendar_service(owner_id, session)
+    if not service:
+        return []
+
+    us = await us_repo.get_or_create(session, owner_id)
+    items = await cal_svc.get_today_events(service, us.timezone)
+    result: list[CalendarEventOut] = []
+    for item in items:
+        start_val = item.get("start", {})
+        end_val = item.get("end", {})
+        start_str: str = start_val.get("dateTime") or start_val.get("date") or ""
+        end_str: str | None = end_val.get("dateTime") or end_val.get("date") or None
+        result.append(CalendarEventOut(
+            id=str(item.get("id", "")),
+            title=str(item.get("summary", "Без названия")),
+            start=start_str,
+            end=end_str,
+            url=item.get("htmlLink"),
+        ))
+    return result
+
+
 # ── Gmail threads ─────────────────────────────────────────────────────────────
 
 class GmailThreadOut(BaseModel):

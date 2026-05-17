@@ -4,7 +4,7 @@ import enum
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum, String, Text, func, TIMESTAMP
+from sqlalchemy import ARRAY, BigInteger, Boolean, DateTime, Enum, String, Text, func, TIMESTAMP
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -79,6 +79,7 @@ class Contact(Base):
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     phone: Mapped[str | None] = mapped_column(String(32))
     team_label: Mapped[str | None] = mapped_column(String(64))
+    labels: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}", nullable=False)
     synced_from: Mapped[str | None] = mapped_column(String(32))
     tg_first_name: Mapped[str | None] = mapped_column(String(128))
     tg_last_name: Mapped[str | None] = mapped_column(String(128))

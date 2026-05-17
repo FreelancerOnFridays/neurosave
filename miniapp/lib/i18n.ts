@@ -12,6 +12,13 @@ const ru = {
   today_summary_reminders: "Напоминания",
   today_my_section: "Мои задачи на сегодня",
   today_delegated_section: "Делегировано сегодня",
+  today_quick_capture_placeholder: "Добавить задачу или напоминание…",
+  today_progress_label: "выполнено",
+  today_priority_section: "Главное",
+  today_timeline_section: "Расписание",
+  today_anytime_group: "Без времени",
+  today_calendar_event: "Встреча",
+  today_all_done: "Всё выполнено 🎉",
 
   tasks_my_tasks: "Мои задачи",
   tasks_delegated_tasks: "Делегировано",
@@ -136,6 +143,10 @@ const ru = {
   contacts_save: "Сохранить",
   contacts_search: "Поиск по имени",
   contacts_no_email: "Нет email",
+  labels_section: "Метки",
+  labels_add: "Добавить метку",
+  labels_empty: "Нет меток",
+  labels_filter: "Все метки",
 } as const;
 
 const en: Record<keyof typeof ru, string> = {
@@ -150,6 +161,13 @@ const en: Record<keyof typeof ru, string> = {
   today_summary_reminders: "Reminders",
   today_my_section: "My tasks today",
   today_delegated_section: "Delegated today",
+  today_quick_capture_placeholder: "Add task or reminder…",
+  today_progress_label: "done",
+  today_priority_section: "Priority",
+  today_timeline_section: "Schedule",
+  today_anytime_group: "Anytime",
+  today_calendar_event: "Meeting",
+  today_all_done: "All done 🎉",
 
   tasks_my_tasks: "My tasks",
   tasks_delegated_tasks: "Delegated",
@@ -274,6 +292,10 @@ const en: Record<keyof typeof ru, string> = {
   contacts_save: "Save",
   contacts_search: "Search by name",
   contacts_no_email: "No email",
+  labels_section: "Labels",
+  labels_add: "Add label",
+  labels_empty: "No labels",
+  labels_filter: "All labels",
 };
 
 const strings = { ru, en } as const;

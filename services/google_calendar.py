@@ -122,6 +122,29 @@ async def list_upcoming_events(service: Any, days: int = 7) -> list[dict[str, An
 
 
 @beartype
+async def get_today_events(service: Any, tz_name: str = "UTC") -> list[dict[str, Any]]:
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo(tz_name)
+    from datetime import datetime as _dt
+    now = _dt.now(tz)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    day_end = now.replace(hour=23, minute=59, second=59, microsecond=0).astimezone(timezone.utc)
+    try:
+        result: dict[str, Any] = service.events().list(
+            calendarId="primary",
+            timeMin=day_start.isoformat(),
+            timeMax=day_end.isoformat(),
+            singleEvents=True,
+            orderBy="startTime",
+            maxResults=20,
+        ).execute()
+        return list(result.get("items", []))
+    except Exception as e:
+        logger.warning("Failed to list today's calendar events: %s", e)
+        return []
+
+
+@beartype
 async def sync_task_deadline(
     owner_id: int,
     description: str,

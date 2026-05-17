@@ -58,6 +58,7 @@ export interface Contact {
   phone: string | null;
   email: string | null;
   team_label: string | null;
+  labels: string[];
   synced_from: "telethon" | "manual" | null;
   last_seen: string | null;
   last_synced_at: string | null;

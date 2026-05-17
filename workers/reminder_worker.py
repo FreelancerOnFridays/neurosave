@@ -16,10 +16,29 @@ logger = logging.getLogger(__name__)
 _CHECK_INTERVAL_SECONDS = 60
 
 
-def _format_reminder(description: str, language: str) -> str:
+def _format_reminder(description: str, language: str, reminder_time: "datetime | None" = None) -> str:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
     if language == "ru":
-        return f"⏰ Напоминание: {description}"
-    return f"⏰ Reminder: {description}"
+        text = f"⏰ <b>Напоминание</b>\n{description}"
+    else:
+        text = f"⏰ <b>Reminder</b>\n{description}"
+
+    if reminder_time is not None:
+        try:
+            local = reminder_time.astimezone(ZoneInfo("Europe/Moscow"))
+            time_str = local.strftime("%H:%M")
+            date_str = local.strftime("%d.%m")
+            today = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%d.%m")
+            if date_str == today:
+                suffix = f"сегодня в {time_str}" if language == "ru" else f"today at {time_str}"
+            else:
+                suffix = f"{date_str} в {time_str}" if language == "ru" else f"{date_str} at {time_str}"
+            text += f"\n📅 {suffix}"
+        except Exception:
+            pass
+    return text
 
 
 @beartype
@@ -31,8 +50,8 @@ async def fire_pending_reminders(bot: Bot) -> None:
             pending = await task_repo.get_tasks_with_pending_reminders(session, owner_id=owner_id)
             for task in pending:
                 try:
-                    text = _format_reminder(task.description, us.language)
-                    await bot.send_message(chat_id=owner_id, text=text)
+                    text = _format_reminder(task.description, us.language, task.reminder_time)
+                    await bot.send_message(chat_id=owner_id, text=text, parse_mode="HTML")
                     await task_repo.mark_reminder_fired(session, task.id)
                 except Exception:
                     logger.exception("Failed to fire reminder for task %d", task.id)

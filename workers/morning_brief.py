@@ -115,55 +115,56 @@ async def build_and_send_brief(bot: Bot, user_id: int) -> None:
 
     if lang == "ru":
         date_str = f"{now_local.day} {_MONTH_RU[now_local.month]}"
-        lines: list[str] = [f"☕ <b>Доброе утро! Дайджест — {date_str}</b>"]
+        lines: list[str] = [f"☕ <b>Доброе утро! {date_str}</b>"]
     else:
         date_str = now_local.strftime("%b %d")
-        lines = [f"☕ <b>Good morning! Briefing — {date_str}</b>"]
+        lines = [f"☕ <b>Good morning! {date_str}</b>"]
 
     # ── Section 1: Owner's personal tasks ────────────────────────────────────
     if my_tasks:
-        lines.append("\n✅ <b>Ваши задачи на сегодня:</b>" if lang == "ru" else "\n✅ <b>Your tasks today:</b>")
+        lines.append("")
+        lines.append("✅ <b>Ваши задачи на сегодня</b>" if lang == "ru" else "✅ <b>Your tasks today</b>")
         for task in my_tasks:
             time_dt = task.reminder_time or task.deadline
             time_str = _fmt_time(time_dt, tz_name) if time_dt else ""
-            lines.append(f"• {task.description}" + (f" — {time_str}" if time_str else ""))
-    else:
-        label = "нет запланированного" if lang == "ru" else "nothing scheduled"
-        lines.append(f"\n✅ <b>{'Ваши задачи на сегодня' if lang == 'ru' else 'Your tasks today'}:</b> {label}")
+            lines.append(f"• {task.description}" + (f"  <i>{time_str}</i>" if time_str else ""))
 
     # ── Section 2: Delegated tasks due today (assigned to others) ────────────
     if delegated_today:
-        lines.append("\n📌 <b>Делегировано (дедлайн сегодня):</b>" if lang == "ru" else "\n📌 <b>Delegated (due today):</b>")
+        lines.append("")
+        lines.append("📌 <b>Делегировано сегодня</b>" if lang == "ru" else "📌 <b>Delegated today</b>")
         for t in delegated_today:
-            time_str = _fmt_time(t.deadline, tz_name) if t.deadline else "—"
-            assignee = f" → {t.assignee_name}" if t.assignee_name else ""
-            lines.append(f"• {t.description}{assignee} ({time_str})")
+            time_str = _fmt_time(t.deadline, tz_name) if t.deadline else ""
+            assignee = f" · {t.assignee_name}" if t.assignee_name else ""
+            lines.append(f"• {t.description}{assignee}" + (f"  <i>{time_str}</i>" if time_str else ""))
 
     # ── Section 3: Overdue delegated tasks ───────────────────────────────────
     today_ids = {t.id for t in delegated_today}
     truly_overdue = [t for t in overdue if t.id not in today_ids]
     if truly_overdue:
-        lines.append("\n⚠️ <b>Просрочено у команды:</b>" if lang == "ru" else "\n⚠️ <b>Overdue (team):</b>")
+        lines.append("")
+        lines.append("⚠️ <b>Просрочено</b>" if lang == "ru" else "⚠️ <b>Overdue</b>")
         for t in truly_overdue[:5]:
             when = _days_ago(t.deadline, lang) if t.deadline else "?"
-            assignee = f" → {t.assignee_name}" if t.assignee_name else ""
-            lines.append(f"• {t.description}{assignee} ({when})")
+            assignee = f" · {t.assignee_name}" if t.assignee_name else ""
+            lines.append(f"• {t.description}{assignee}  <i>{when}</i>")
         if len(truly_overdue) > 5:
             extra = len(truly_overdue) - 5
-            lines.append(f"  <i>+ ещё {extra}</i>" if lang == "ru" else f"  <i>+ {extra} more</i>")
+            lines.append(f"<i>+ ещё {extra}</i>" if lang == "ru" else f"<i>+ {extra} more</i>")
 
     # ── Section 4: Night digest ───────────────────────────────────────────────
     if ghost_inquiries:
-        header = "🌙 <b>Ночной дайджест (Ghost Mode):</b>" if lang == "ru" else "🌙 <b>Night digest (Ghost Mode):</b>"
-        lines.append(f"\n{header}")
+        lines.append("")
+        lines.append("🌙 <b>Ночной дайджест</b>" if lang == "ru" else "🌙 <b>Night digest</b>")
         for inq in ghost_inquiries[:8]:
             name = inq.caller_name or f"ID {inq.caller_id}"
             summary = inq.summary or "—"
             cat_label = _CATEGORY_LABELS.get(inq.category, "") if inq.category else ""
             prefix = f"{cat_label} " if cat_label else ""
-            lines.append(f"• {prefix}<b>{name}</b> — {summary}")
+            lines.append(f"• {prefix}<b>{name}</b>  {summary}")
     elif incoming_by_sender:
-        lines.append("\n🌙 <b>Ночной дайджест:</b>" if lang == "ru" else "\n🌙 <b>Night digest:</b>")
+        lines.append("")
+        lines.append("🌙 <b>Ночной дайджест</b>" if lang == "ru" else "🌙 <b>Night digest</b>")
         for sender_id, info in list(incoming_by_sender.items())[:8]:
             name = info["name"] or f"ID {sender_id}"
             count = info["count"]
@@ -171,10 +172,7 @@ async def build_and_send_brief(bot: Bot, user_id: int) -> None:
             if len(snippet) > 60:
                 snippet = snippet[:60] + "…"
             count_label = f"{count} сообщ." if lang == "ru" else f"{count} msg"
-            lines.append(f"• <b>{name}</b> ({count_label}) — {snippet}")
-    else:
-        no_msgs = "новых сообщений нет" if lang == "ru" else "no new messages"
-        lines.append(f"\n🌙 <b>{'Ночной дайджест' if lang == 'ru' else 'Night digest'}:</b> {no_msgs}")
+            lines.append(f"• <b>{name}</b> ({count_label})  {snippet}")
 
     # ── Section 5: AI agenda recommendation ──────────────────────────────────
     ctx_parts: list[str] = []
@@ -203,7 +201,8 @@ async def build_and_send_brief(bot: Bot, user_id: int) -> None:
         try:
             agenda = await generate_agenda_recommendation("\n".join(ctx_parts), language=lang)
             if agenda:
-                lines.append("\n📋 <b>Рекомендация:</b>" if lang == "ru" else "\n📋 <b>Agenda:</b>")
+                lines.append("")
+                lines.append("📋 <b>Рекомендация</b>" if lang == "ru" else "📋 <b>Agenda</b>")
                 lines.append(agenda)
         except Exception:
             logger.warning("generate_agenda_recommendation failed", exc_info=True)

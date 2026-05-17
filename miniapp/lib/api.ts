@@ -121,6 +121,12 @@ export const api = {
         body: JSON.stringify(body),
       }),
     avatarUrl: (user_id: number) => `/api/contacts/${user_id}/avatar`,
+    getLabels: () => request<string[]>("/api/contacts/labels"),
+    setLabels: (user_id: number, labels: string[]) =>
+      request<Contact>(`/api/contacts/${user_id}/labels`, {
+        method: "PUT",
+        body: JSON.stringify({ labels }),
+      }),
   },
   integrations: {
     status: () => request<IntegrationsStatus>("/api/integrations/status"),
@@ -154,6 +160,8 @@ export const api = {
       }),
     calendarEvents: (days = 7) =>
       request<CalendarEvent[]>(`/api/integrations/google-calendar/events?days=${days}`),
+    calendarToday: () =>
+      request<CalendarEvent[]>("/api/integrations/calendar/today"),
   },
   sync: {
     status: () =>

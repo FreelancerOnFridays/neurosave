@@ -96,6 +96,7 @@ async def _upsert_from_tg_user(
 
     if contact is None:
         phone: str | None = getattr(user, "phone", None)
+        initial_labels = [team_label] if team_label else []
         contact = Contact(
             owner_id=owner_id,
             user_id=user.id,
@@ -105,6 +106,7 @@ async def _upsert_from_tg_user(
             tg_last_name=user.last_name,
             phone=phone,
             team_label=team_label,
+            labels=initial_labels,
             synced_from="telethon",
             last_synced_at=now,
         )
@@ -122,6 +124,11 @@ async def _upsert_from_tg_user(
             contact.phone = phone
         if team_label:
             contact.team_label = team_label
+            # Merge folder label into labels array
+            existing = list(contact.labels or [])
+            if team_label not in existing:
+                existing.append(team_label)
+                contact.labels = existing
         contact.synced_from = "telethon"
         contact.last_synced_at = now
         return False
