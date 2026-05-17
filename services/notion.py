@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-NOTION_TOKEN_PROVIDER = "notion"
 NOTION_DB_KEY = "notion_db_id"
 
 
@@ -16,7 +15,7 @@ NOTION_DB_KEY = "notion_db_id"
 async def get_notion_token(owner_id: int, session: AsyncSession) -> str | None:
     from db.repositories import oauth as oauth_repo
 
-    row = await oauth_repo.get_token(session, owner_id, NOTION_TOKEN_PROVIDER)
+    row = await oauth_repo.get_token(session, owner_id, "notion")
     return row.access_token if row else None
 
 
@@ -54,11 +53,7 @@ async def create_page(token: str, db_id: str, title: str, content: str) -> str:
     notion = AsyncClient(auth=token)
     response: dict[str, Any] = await notion.pages.create(  # type: ignore[assignment]
         parent={"database_id": db_id},
-        properties={
-            "title": {
-                "title": _make_rich_text(title[:255])
-            }
-        },
+        properties={"title": {"title": _make_rich_text(title[:255])}},
         children=_split_into_paragraphs(content),
     )
     await notion.aclose()
@@ -75,9 +70,7 @@ async def create_task_page(
     from notion_client import AsyncClient
 
     notion = AsyncClient(auth=token)
-    properties: dict[str, Any] = {
-        "title": {"title": _make_rich_text(title[:255])}
-    }
+    properties: dict[str, Any] = {"title": {"title": _make_rich_text(title[:255])}}
     if due_date_iso:
         properties["Due"] = {"date": {"start": due_date_iso[:10]}}
 
@@ -91,7 +84,6 @@ async def create_task_page(
 
 @beartype
 async def list_databases(token: str) -> list[tuple[str, str]]:
-    """Returns list of (id, title) for all databases accessible to the integration."""
     from notion_client import AsyncClient
 
     notion = AsyncClient(auth=token)
