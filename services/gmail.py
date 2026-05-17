@@ -255,9 +255,13 @@ async def send_reply(
     return str(result.get("id", ""))
 
 
+# Gmail label IDs that indicate automated/bulk/non-human messages
+_SKIP_LABELS = {"CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES", "SPAM", "TRASH"}
+
+
 @beartype
 async def get_history_since(service: Any, start_history_id: str) -> list[dict[str, Any]]:
-    """Return new messages since the given Gmail historyId (RECEIVE type only)."""
+    """Return new human inbox messages since the given Gmail historyId."""
     try:
         resp: dict[str, Any] = service.users().history().list(
             userId="me",
@@ -272,8 +276,13 @@ async def get_history_since(service: Any, start_history_id: str) -> list[dict[st
     messages: list[dict[str, Any]] = []
     for record in resp.get("history", []):
         for added in record.get("messagesAdded", []):
-            msg_id = added.get("message", {}).get("id")
+            raw_msg = added.get("message", {})
+            msg_id = raw_msg.get("id")
             if not msg_id:
+                continue
+            # Quick label check — skip promo/social/updates/spam without a full fetch
+            label_ids: set[str] = set(raw_msg.get("labelIds", []))
+            if label_ids & _SKIP_LABELS:
                 continue
             try:
                 details: dict[str, Any] = service.users().messages().get(
@@ -282,7 +291,15 @@ async def get_history_since(service: Any, start_history_id: str) -> list[dict[st
                     format="metadata",
                     metadataHeaders=["Subject", "From", "Date", "In-Reply-To"],
                 ).execute()
-                messages.append(_extract_message_meta(details, is_reply=True))
+                # Double-check labels from full metadata response
+                detail_labels: set[str] = set(details.get("labelIds", []))
+                if detail_labels & _SKIP_LABELS:
+                    continue
+                meta = _extract_message_meta(details, is_reply=True)
+                # Skip automated senders
+                if _is_automated_sender(meta.get("from_", "")):
+                    continue
+                messages.append(meta)
             except Exception as exc:
                 logger.warning("Gmail get_message detail failed for %s: %s", msg_id, exc)
     return messages

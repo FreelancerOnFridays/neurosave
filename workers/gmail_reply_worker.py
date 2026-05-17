@@ -52,7 +52,7 @@ async def _init_history_id(service: object, session: object, owner_id: int) -> s
 
 @beartype
 async def check_gmail_replies(bot: Bot) -> None:
-    from services.gmail import get_gmail_service, get_history_since
+    from services.gmail import get_gmail_service, get_history_since, _is_automated_sender
 
     async with session_factory() as session:
         owner_ids = await us_repo.get_all_owner_ids(session)
@@ -86,8 +86,11 @@ async def check_gmail_replies(bot: Bot) -> None:
                 new_history_id = ""
 
             for msg in messages:
-                # Only forward inbox replies (messages that have In-Reply-To or are_reply)
+                # Only forward actual human replies (must have In-Reply-To header)
                 if not msg.get("is_reply"):
+                    continue
+                # Extra safety: skip automated senders
+                if _is_automated_sender(msg.get("from_", "")):
                     continue
                 try:
                     await bot.send_message(
