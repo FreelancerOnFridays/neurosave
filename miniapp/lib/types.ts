@@ -66,6 +66,15 @@ export interface ContactSyncStatus {
   last_sync: string | null;
   telethon_authorized: boolean;
   telethon_configured: boolean;
+  contact_count: number;
+}
+
+export interface NotionPage {
+  id: string;
+  title: string;
+  url: string;
+  section: string;
+  created_time: string;
 }
 
 export interface IntegrationStatus {
@@ -79,5 +88,22 @@ export interface IntegrationsStatus {
   google_calendar: IntegrationStatus;
   gmail: IntegrationStatus;
   notion: IntegrationStatus;
+  google_docs: IntegrationStatus;
+}
+
+export interface DriveFile {
+  id: string;
+  name: string;
+  url: string;
+  type: "doc" | "sheet";
+  modified_time: string;
+}
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  start: string;
+  end: string | null;
+  url: string | null;
 }
 

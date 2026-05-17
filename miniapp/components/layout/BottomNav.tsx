@@ -12,6 +12,7 @@ export function BottomNav() {
     { href: "/today", icon: "📅", label: t("nav_today") },
     { href: "/tasks", icon: "📌", label: t("nav_tasks") },
     { href: "/ghost", icon: "👻", label: t("nav_ghost") },
+    { href: "/integrations", icon: "🔗", label: t("nav_integrations") },
     { href: "/settings", icon: "⚙️", label: t("nav_settings") },
   ];
 

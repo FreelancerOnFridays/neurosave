@@ -105,9 +105,9 @@ export function ContactsSection() {
     <Card className="mt-4">
       <div className="flex items-center justify-between mb-3">
         <p className="text-sm font-semibold text-tg-text">{t("settings_contacts_title")}</p>
-        {contacts.length > 0 && (
+        {(status?.contact_count ?? 0) > 0 && (
           <span className="text-xs text-tg-hint">
-            {contacts.length} {t("contacts_count")}
+            {status!.contact_count} {t("contacts_count")}
           </span>
         )}
       </div>

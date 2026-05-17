@@ -550,6 +550,11 @@ async def _process_owner_text(
         await _handle_notion(message, parsed, owner_id, session)
         return
 
+    # ── Google Docs / Sheets ──────────────────────────────────────────────────
+    if parsed.is_gdocs:
+        await _handle_gdocs(message, parsed, owner_id, session)
+        return
+
     # ── Dispatch to contacts ──────────────────────────────────────────────────
     if parsed.has_dispatch and parsed.recipients:
         if not (parsed.literal_message or parsed.message_intent):
@@ -760,43 +765,113 @@ async def _handle_notion(
         )
         return
 
-    db_id = await notion_svc.get_notion_db_id(owner_id, session)
-    if db_id is None:
-        await message.answer(
-            "⚙️ Notion подключён, но база не настроена.\n"
-            "Отправь боту: /notion_db <ID базы>\n\n"
-            "ID базы можно найти в URL базы Notion: "
-            "notion.so/myworkspace/<b>ID-базы-здесь</b>?v=...",
-            parse_mode="HTML",
-        )
-        return
-
     title = parsed.notion_title or "Без названия"
     content = parsed.notion_content or ""
     action = parsed.notion_action or "capture"
 
     try:
+        section_id = await notion_svc.ensure_section_page(token, owner_id, action, session)
+
         if action == "task":
-            page_id = await notion_svc.create_task_page(
-                token, db_id, title, parsed.notion_due_date_iso
+            page_id, url = await notion_svc.create_task_page(
+                token, section_id, title, parsed.notion_due_date_iso
             )
             due_note = f" (до {parsed.notion_due_date_iso[:10]})" if parsed.notion_due_date_iso else ""
-            await message.answer(f"✅ Задача добавлена в Notion: <b>{title}</b>{due_note}", parse_mode="HTML")
+            text = f"✅ Задача в Notion: <b>{title}</b>{due_note}"
+            if url:
+                text += f'\n<a href="{url}">Открыть →</a>'
+            await message.answer(text, parse_mode="HTML")
 
         elif action == "meeting_notes":
             if not content:
                 content = f"Встреча: {title}"
             structured = await generate_meeting_notes(content)
-            page_id = await notion_svc.create_page(token, db_id, title, structured)
-            await message.answer(f"✅ Заметка о встрече сохранена в Notion: <b>{title}</b>", parse_mode="HTML")
+            page_id, url = await notion_svc.create_page(token, section_id, title, structured)
+            text = f"✅ Встреча в Notion: <b>{title}</b>"
+            if url:
+                text += f'\n<a href="{url}">Открыть →</a>'
+            await message.answer(text, parse_mode="HTML")
 
         else:  # capture
-            page_id = await notion_svc.create_page(token, db_id, title, content)
-            await message.answer(f"✅ Сохранено в Notion: <b>{title}</b>", parse_mode="HTML")
+            page_id, url = await notion_svc.create_page(token, section_id, title, content)
+            text = f"✅ Сохранено в Notion: <b>{title}</b>"
+            if url:
+                text += f'\n<a href="{url}">Открыть →</a>'
+            await message.answer(text, parse_mode="HTML")
 
     except Exception as exc:
         logger.exception("Notion create_page failed for owner %d: %s", owner_id, exc)
-        await message.answer("❌ Не удалось сохранить в Notion. Проверь подключение и права доступа к базе.")
+        await message.answer("❌ Не удалось сохранить в Notion. Проверь подключение и права доступа.")
+
+
+async def _handle_gdocs(
+    message: Message,
+    parsed: "DispatchCommand",
+    owner_id: int,
+    session: AsyncSession,
+) -> None:
+    from services import google_docs as docs_svc, google_sheets as sheets_svc
+
+    creds = await docs_svc.get_gdocs_credentials(owner_id, session)
+    if creds is None:
+        await message.answer(
+            "❌ Google Docs не подключён. Перейди в мини-приложение → Настройки → Интеграции → Google Docs."
+        )
+        return
+
+    action = parsed.gdocs_action or "create_doc"
+    name = parsed.gdocs_target_name or "Без названия"
+
+    try:
+        if action in ("create_doc", "append_doc"):
+            doc_id, url = await docs_svc.find_or_create_doc(
+                creds, owner_id, name, parsed.gdocs_content or "", session
+            )
+            await session.commit()
+            text = f"✅ Документ: <b>{name}</b>"
+            if url:
+                text += f'\n<a href="{url}">Открыть →</a>'
+            await message.answer(text, parse_mode="HTML")
+
+        elif action == "create_sheet":
+            folder_id = await docs_svc.ensure_drive_folder(creds, owner_id, session)
+            sheet_id, url = await sheets_svc.create_spreadsheet(creds, folder_id, name)
+            from db.repositories import integration_configs as cfg_repo
+            from services.google_sheets import _sheet_slug
+            await cfg_repo.set_config(session, owner_id, f"gdocs_sheet:{_sheet_slug(name)}", sheet_id)
+            await session.commit()
+            text = f"✅ Таблица создана: <b>{name}</b>"
+            if url:
+                text += f'\n<a href="{url}">Открыть →</a>'
+            await message.answer(text, parse_mode="HTML")
+
+        elif action == "append_row":
+            sheet_id, url = await sheets_svc.find_or_create_sheet(creds, owner_id, name, session)
+            if parsed.gdocs_row_values:
+                url = await sheets_svc.append_row(creds, sheet_id, parsed.gdocs_row_values)
+            await session.commit()
+            text = f"✅ Строка добавлена в <b>{name}</b>"
+            if url:
+                text += f'\n<a href="{url}">Открыть →</a>'
+            await message.answer(text, parse_mode="HTML")
+
+        elif action == "read_sheet":
+            sheet_id, url = await sheets_svc.find_or_create_sheet(creds, owner_id, name, session)
+            rows = await sheets_svc.get_recent_rows(creds, sheet_id)
+            if rows:
+                formatted = "\n".join(" | ".join(r) for r in rows)
+                text = f"📊 <b>{name}</b> (последние записи):\n<pre>{formatted}</pre>"
+                if url:
+                    text += f'\n<a href="{url}">Открыть →</a>'
+            else:
+                text = f"📊 Таблица <b>{name}</b> пуста"
+                if url:
+                    text += f'\n<a href="{url}">Открыть →</a>'
+            await message.answer(text, parse_mode="HTML")
+
+    except Exception as exc:
+        logger.exception("Google Docs/Sheets operation failed for owner %d: %s", owner_id, exc)
+        await message.answer("❌ Не удалось выполнить операцию с Google Docs/Sheets.")
 
 
 async def _handle_pending_email_address(
@@ -955,34 +1030,6 @@ async def handle_owner_voice(message: Message, bot: Bot, session: AsyncSession) 
     await thinking.edit_text(f"🎙 <i>{text}</i>", parse_mode="HTML")
     await us_repo.get_or_create(session, owner_id)
     await _process_owner_text(text, message, bot, session, owner_id)
-
-
-async def cmd_notion_db(message: Message, session: AsyncSession) -> None:
-    if message.from_user is None:
-        return
-    owner_id = message.from_user.id
-    text = message.text or ""
-    parts = text.strip().split(maxsplit=1)
-    if len(parts) < 2 or not parts[1].strip():
-        await message.answer(
-            "Использование: /notion_db <ID базы>\n\n"
-            "ID можно найти в URL базы Notion:\n"
-            "notion.so/workspace/<b>этот-id-здесь</b>?v=...",
-            parse_mode="HTML",
-        )
-        return
-    db_id = parts[1].strip().replace("-", "")
-    if len(db_id) != 32 or not db_id.isalnum():
-        await message.answer("❌ Неверный формат ID. ID базы Notion — 32 символа (буквы и цифры).")
-        return
-    from services import notion as notion_svc
-    token = await notion_svc.get_notion_token(owner_id, session)
-    if token is None:
-        await message.answer("❌ Сначала подключи Notion в мини-приложении → Настройки → Интеграции.")
-        return
-    await notion_svc.set_notion_db_id(owner_id, db_id, session)
-    await session.commit()
-    await message.answer("✅ База Notion сохранена. Теперь можно говорить: «запиши в ноушн: ...»")
 
 
 async def cmd_reminders(message: Message, session: AsyncSession) -> None:

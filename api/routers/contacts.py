@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func as sql_func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth import get_owner_id
@@ -38,6 +38,7 @@ class SyncStatus(BaseModel):
     last_sync: str | None
     telethon_authorized: bool
     telethon_configured: bool
+    contact_count: int = 0
 
 
 class FolderOut(BaseModel):
@@ -68,10 +69,15 @@ async def sync_status(
     last_sync = get_last_contact_sync()
     configured = tg_client.is_configured()
     authorized = await tg_client.is_authorized(owner_id, us.telethon_session) if configured else False
+    count_result = await session.execute(
+        select(sql_func.count()).select_from(Contact).where(Contact.owner_id == owner_id)
+    )
+    contact_count = count_result.scalar_one()
     return SyncStatus(
         last_sync=last_sync or None,
         telethon_authorized=authorized,
         telethon_configured=configured,
+        contact_count=contact_count,
     )
 
 

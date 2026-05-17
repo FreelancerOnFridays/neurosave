@@ -3,6 +3,7 @@
 import useSWR from "swr";
 import { Card } from "@/components/ui/Card";
 import { IntegrationCard } from "./IntegrationCard";
+import { NotionQuickCapture } from "./NotionQuickCapture";
 import { api } from "@/lib/api";
 import { useLang } from "@/contexts/LanguageContext";
 import type { IntegrationsStatus } from "@/lib/types";
@@ -48,6 +49,18 @@ export function IntegrationsSection() {
           description="Сохранение заметок, задач и итогов встреч прямо из чата с ботом"
           onAuthUrl={api.integrations.notionAuthUrl}
           onDisconnect={api.integrations.notionDisconnect}
+          onRefresh={() => mutate()}
+        />
+        {data.notion.connected && <NotionQuickCapture />}
+      </div>
+      <div className="mt-3">
+        <IntegrationCard
+          integration={data.google_docs}
+          label="Google Docs & Sheets"
+          icon="📄"
+          description="Создание документов и таблиц прямо из чата с ботом"
+          onAuthUrl={api.integrations.googleDocsAuthUrl}
+          onDisconnect={api.integrations.googleDocsDisconnect}
           onRefresh={() => mutate()}
         />
       </div>

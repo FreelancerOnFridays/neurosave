@@ -103,6 +103,25 @@ async def create_calendar_event(
 
 
 @beartype
+async def list_upcoming_events(service: Any, days: int = 7) -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    end = now + timedelta(days=days)
+    try:
+        result: dict[str, Any] = service.events().list(
+            calendarId="primary",
+            timeMin=now.isoformat(),
+            timeMax=end.isoformat(),
+            singleEvents=True,
+            orderBy="startTime",
+            maxResults=20,
+        ).execute()
+        return list(result.get("items", []))
+    except Exception as e:
+        logger.warning("Failed to list calendar events: %s", e)
+        return []
+
+
+@beartype
 async def sync_task_deadline(
     owner_id: int,
     description: str,

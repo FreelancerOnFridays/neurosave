@@ -120,6 +120,12 @@ class DispatchCommand(BaseModel):
     notion_title: str | None = None
     notion_content: str | None = None
     notion_due_date_iso: str | None = None
+    # google docs/sheets fields
+    is_gdocs: bool = False
+    gdocs_action: str | None = None  # "create_doc"|"append_doc"|"create_sheet"|"append_row"|"read_sheet"
+    gdocs_target_name: str | None = None
+    gdocs_content: str | None = None
+    gdocs_row_values: list[str] | None = None
 
 
 class ReminderAction(BaseModel):
@@ -309,8 +315,24 @@ async def parse_dispatch_command(text: str, language: str = "ru", tz_name: str =
                     "  - notion_content: full content/body to save. Include all relevant details from the message.\n"
                     "  - notion_due_date_iso: for 'task' action only — deadline in ISO 8601 date format (YYYY-MM-DD). "
                     "Null if no deadline mentioned.\n\n"
+                    "TYPE G — GOOGLE DOCS / SHEETS: the owner wants to work with Google Docs or Google Sheets.\n"
+                    "  Trigger phrases: 'создай документ', 'сохрани в документ', 'добавь в таблицу', "
+                    "'создай таблицу', 'покажи таблицу', 'записать в гугл документ', 'google doc', 'google sheet'.\n"
+                    "  Set is_gdocs=true, has_dispatch=false, is_reminder=false, is_notion=false, is_email=false.\n"
+                    "  - gdocs_action: one of:\n"
+                    "      'create_doc' — create a new Google Doc.\n"
+                    "      'append_doc' — add content to an existing doc (e.g. 'сохрани в документ X: текст').\n"
+                    "      'create_sheet' — create a new Google Spreadsheet.\n"
+                    "      'append_row' — add a row to a spreadsheet (e.g. 'добавь в таблицу расходов: кофе 200 руб').\n"
+                    "      'read_sheet' — show recent rows from a spreadsheet.\n"
+                    "  - gdocs_target_name: name of the document or spreadsheet (normalized: lowercase, spaces preserved).\n"
+                    "  - gdocs_content: text content for doc operations. Null for sheet operations.\n"
+                    "  - gdocs_row_values: for 'append_row' only — list of cell values as strings. "
+                    "Always add today's date as the FIRST value (YYYY-MM-DD format). "
+                    "Then split the data into logical cells. "
+                    "Example: 'кофе 200 руб' → ['2024-01-15', 'кофе', '200', 'руб'].\n\n"
                     "If none of the above apply, set has_dispatch=false, is_reminder=false, is_settings=false, "
-                    "is_ghost=false, is_email=false, is_notion=false."
+                    "is_ghost=false, is_email=false, is_notion=false, is_gdocs=false."
                 ),
             },
             {"role": "user", "content": text},

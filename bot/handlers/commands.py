@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 from bot.config_store import set_last_contact_sync, t
 from bot.keyboards.settings import language_keyboard
 from bot.keyboards.tasks import task_action_keyboard
-from bot.handlers.direct_messages import cmd_reminders, cmd_notion_db
+from bot.handlers.direct_messages import cmd_reminders
 from bot.handlers.ghost import cmd_digest
 import bot.telethon_client as tg_client
 from config import settings
@@ -429,6 +429,3 @@ async def cmd_brief(message: Message, session: AsyncSession) -> None:
         await build_and_send_brief(message.bot, user_id)
 
 
-@router.message(Command("notion_db"))
-async def cmd_notion_db_handler(message: Message, session: AsyncSession) -> None:
-    await cmd_notion_db(message, session)

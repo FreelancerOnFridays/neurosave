@@ -33,6 +33,14 @@ GMAIL_SCOPES = [
     "email",
 ]
 
+GDOCS_SCOPES = [
+    "https://www.googleapis.com/auth/documents",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.file",
+    "openid",
+    "email",
+]
+
 
 class IntegrationStatus(BaseModel):
     provider: str
@@ -45,6 +53,7 @@ class IntegrationsStatusOut(BaseModel):
     google_calendar: IntegrationStatus
     gmail: IntegrationStatus
     notion: IntegrationStatus
+    google_docs: IntegrationStatus
 
 
 class AuthUrlOut(BaseModel):
@@ -104,7 +113,19 @@ async def integrations_status(
         email=notion_row.email if notion_row else None,
         scopes=[],
     )
-    return IntegrationsStatusOut(google_calendar=google_status, gmail=gmail_status, notion=notion_status)
+    gdocs_row = await oauth_repo.get_token(session, owner_id, "google_docs")
+    gdocs_status = IntegrationStatus(
+        provider="google_docs",
+        connected=gdocs_row is not None,
+        email=gdocs_row.email if gdocs_row else None,
+        scopes=(gdocs_row.scopes or "").split() if gdocs_row else [],
+    )
+    return IntegrationsStatusOut(
+        google_calendar=google_status,
+        gmail=gmail_status,
+        notion=notion_status,
+        google_docs=gdocs_status,
+    )
 
 
 @router.get("/google/auth-url", response_model=AuthUrlOut)
@@ -512,5 +533,268 @@ async def notion_disconnect(
     from db.repositories import integration_configs as cfg_repo
 
     await oauth_repo.delete_token(session, owner_id, "notion")
-    await cfg_repo.delete_config(session, owner_id, "notion_db_id")
+    for key in ["notion_root_page_id", "notion_section_capture", "notion_section_task", "notion_section_meeting_notes"]:
+        await cfg_repo.delete_config(session, owner_id, key)
     await session.commit()
+
+
+class NotionCaptureIn(BaseModel):
+    title: str
+    content: str = ""
+    section: str = "capture"
+
+
+class NotionCaptureOut(BaseModel):
+    page_id: str
+    url: str
+
+
+@router.post("/notion/capture", response_model=NotionCaptureOut)
+async def notion_capture(
+    body: NotionCaptureIn,
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> NotionCaptureOut:
+    from services import notion as notion_svc
+
+    token = await notion_svc.get_notion_token(owner_id, session)
+    if not token:
+        raise HTTPException(status_code=400, detail="Notion not connected")
+
+    section = body.section if body.section in ("capture", "task", "meeting_notes") else "capture"
+    section_id = await notion_svc.ensure_section_page(token, owner_id, section, session)
+    await session.commit()
+
+    page_id, url = await notion_svc.create_page(token, section_id, body.title, body.content)
+    return NotionCaptureOut(page_id=page_id, url=url)
+
+
+class NotionPageOut(BaseModel):
+    id: str
+    title: str
+    url: str
+    section: str
+    created_time: str
+
+
+@router.get("/notion/pages", response_model=list[NotionPageOut])
+async def notion_pages(
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> list[NotionPageOut]:
+    from services import notion as notion_svc
+
+    token = await notion_svc.get_notion_token(owner_id, session)
+    if not token:
+        raise HTTPException(status_code=400, detail="Notion not connected")
+
+    pages = await notion_svc.list_all_recent_pages(token, owner_id, session)
+    return [NotionPageOut(**p) for p in pages]
+
+
+# ── Google Docs & Sheets ──────────────────────────────────────────────────────
+
+_GDOCS_SUCCESS_HTML = """<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Google Docs подключён</title>
+  <style>
+    body {{ font-family: system-ui, sans-serif; display: flex; flex-direction: column;
+           align-items: center; justify-content: center; min-height: 100vh;
+           margin: 0; background: #f0fdf4; color: #166534; }}
+    h1 {{ font-size: 1.5rem; margin-bottom: .5rem; }}
+    p {{ color: #15803d; font-size: .95rem; }}
+    a {{ display: inline-block; margin-top: 1.5rem; padding: .75rem 1.5rem;
+         background: #16a34a; color: #fff; border-radius: 12px;
+         text-decoration: none; font-weight: 600; }}
+  </style>
+</head>
+<body>
+  <h1>✅ Google Docs & Sheets подключён!</h1>
+  <p>Вернитесь в Telegram. Теперь можно создавать документы и таблицы прямо из чата.</p>
+  <a href="https://t.me/neurosavebot">Открыть NeuroSave</a>
+</body>
+</html>"""
+
+
+@router.get("/google-docs/auth-url", response_model=AuthUrlOut)
+async def gdocs_auth_url(
+    owner_id: int = Depends(get_owner_id),
+) -> AuthUrlOut:
+    if not settings.google_client_id or not settings.google_client_secret:
+        raise HTTPException(status_code=503, detail="Google OAuth not configured")
+
+    redirect_uri = f"{settings.api_base_url}/api/integrations/google-docs/callback"
+    flow = _make_google_flow(redirect_uri, GDOCS_SCOPES)
+    state = _make_state(owner_id)
+    auth_url, _ = flow.authorization_url(
+        access_type="offline",
+        prompt="consent",
+        state=state,
+    )
+    return AuthUrlOut(url=auth_url)
+
+
+@router.get("/google-docs/callback", response_class=HTMLResponse)
+async def gdocs_callback(
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_db),
+) -> HTMLResponse:
+    if error:
+        return HTMLResponse(_ERROR_HTML.format(error=error), status_code=400)
+    if not code or not state:
+        return HTMLResponse(_ERROR_HTML.format(error="Отсутствуют параметры code/state"), status_code=400)
+
+    owner_id = _consume_state(state)
+    if owner_id is None:
+        return HTMLResponse(_ERROR_HTML.format(error="Неверный или истёкший state-параметр"), status_code=400)
+
+    try:
+        import os
+        from db.repositories import oauth as oauth_repo
+
+        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+        redirect_uri = f"{settings.api_base_url}/api/integrations/google-docs/callback"
+        flow = _make_google_flow(redirect_uri, GDOCS_SCOPES)
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+
+        user_email: str | None = None
+        try:
+            from googleapiclient.discovery import build
+            oauth2_service = build("oauth2", "v2", credentials=creds, cache_discovery=False)
+            user_info: dict[str, Any] = oauth2_service.userinfo().get().execute()
+            user_email = user_info.get("email")
+        except Exception:
+            pass
+
+        from datetime import timezone as tz
+        token_expiry = creds.expiry.replace(tzinfo=tz.utc) if creds.expiry else None
+
+        await oauth_repo.upsert_token(
+            session,
+            owner_id,
+            "google_docs",
+            access_token=creds.token or "",
+            refresh_token=creds.refresh_token,
+            token_expiry=token_expiry,
+            scopes=" ".join(creds.scopes or []),
+            email=user_email,
+        )
+        await session.commit()
+        return HTMLResponse(_GDOCS_SUCCESS_HTML, status_code=200)
+
+    except Exception as e:
+        logger.exception("Google Docs OAuth callback error for owner %d: %s", owner_id, e)
+        return HTMLResponse(_ERROR_HTML.format(error=str(e)), status_code=500)
+
+
+@router.delete("/google-docs", status_code=204)
+async def gdocs_disconnect(
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> None:
+    from db.repositories import oauth as oauth_repo
+    await oauth_repo.delete_token(session, owner_id, "google_docs")
+    await session.commit()
+
+
+class DriveFileOut(BaseModel):
+    id: str
+    name: str
+    url: str
+    type: str
+    modified_time: str
+
+
+@router.get("/google-docs/files", response_model=list[DriveFileOut])
+async def gdocs_files(
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> list[DriveFileOut]:
+    from services import google_docs as docs_svc
+    from db.repositories import integration_configs as cfg_repo
+
+    creds = await docs_svc.get_gdocs_credentials(owner_id, session)
+    if not creds:
+        raise HTTPException(status_code=400, detail="Google Docs not connected")
+
+    folder_id = await cfg_repo.get_config(session, owner_id, docs_svc.GDOCS_DRIVE_FOLDER_KEY)
+    if not folder_id:
+        return []
+
+    files = await docs_svc.list_drive_files(creds, folder_id)
+    return [DriveFileOut(**f) for f in files]
+
+
+class CreateDocIn(BaseModel):
+    name: str
+    type: str = "doc"
+
+
+@router.post("/google-docs/create", response_model=dict)
+async def gdocs_create(
+    body: CreateDocIn,
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    from services import google_docs as docs_svc, google_sheets as sheets_svc
+
+    creds = await docs_svc.get_gdocs_credentials(owner_id, session)
+    if not creds:
+        raise HTTPException(status_code=400, detail="Google Docs not connected")
+
+    if body.type == "sheet":
+        folder_id = await docs_svc.ensure_drive_folder(creds, owner_id, session)
+        file_id, url = await sheets_svc.create_spreadsheet(creds, folder_id, body.name)
+        from db.repositories import integration_configs as cfg_repo
+        from services.google_sheets import _sheet_slug
+        await cfg_repo.set_config(session, owner_id, f"gdocs_sheet:{_sheet_slug(body.name)}", file_id)
+    else:
+        file_id, url = await docs_svc.find_or_create_doc(creds, owner_id, body.name, "", session)
+
+    await session.commit()
+    return {"id": file_id, "url": url}
+
+
+# ── Google Calendar events ────────────────────────────────────────────────────
+
+class CalendarEventOut(BaseModel):
+    id: str
+    title: str
+    start: str
+    end: str | None = None
+    url: str | None = None
+
+
+@router.get("/google-calendar/events", response_model=list[CalendarEventOut])
+async def calendar_events(
+    days: int = Query(default=7, ge=1, le=30),
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> list[CalendarEventOut]:
+    from services import google_calendar as cal_svc
+
+    service = await cal_svc.get_calendar_service(owner_id, session)
+    if not service:
+        raise HTTPException(status_code=400, detail="Google Calendar not connected")
+
+    items = await cal_svc.list_upcoming_events(service, days)
+    result: list[CalendarEventOut] = []
+    for item in items:
+        start_val = item.get("start", {})
+        end_val = item.get("end", {})
+        start_str: str = start_val.get("dateTime") or start_val.get("date") or ""
+        end_str: str | None = end_val.get("dateTime") or end_val.get("date") or None
+        result.append(CalendarEventOut(
+            id=str(item.get("id", "")),
+            title=str(item.get("summary", "Без названия")),
+            start=start_str,
+            end=end_str,
+            url=item.get("htmlLink"),
+        ))
+    return result

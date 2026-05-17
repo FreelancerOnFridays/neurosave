@@ -1,10 +1,13 @@
 import type {
   AppSettings,
+  CalendarEvent,
   Contact,
   ContactSyncStatus,
+  DriveFile,
   GhostStatus,
   Inquiry,
   IntegrationsStatus,
+  NotionPage,
   Task,
   TaskStatus,
 } from "./types";
@@ -120,6 +123,22 @@ export const api = {
     gmailDisconnect: () => request<void>("/api/integrations/gmail", { method: "DELETE" }),
     notionAuthUrl: () => request<{ url: string }>("/api/integrations/notion/auth-url"),
     notionDisconnect: () => request<void>("/api/integrations/notion", { method: "DELETE" }),
+    notionCapture: (title: string, content: string, section: string = "capture") =>
+      request<{ page_id: string; url: string }>("/api/integrations/notion/capture", {
+        method: "POST",
+        body: JSON.stringify({ title, content, section }),
+      }),
+    notionPages: () => request<NotionPage[]>("/api/integrations/notion/pages"),
+    googleDocsAuthUrl: () => request<{ url: string }>("/api/integrations/google-docs/auth-url"),
+    googleDocsDisconnect: () => request<void>("/api/integrations/google-docs", { method: "DELETE" }),
+    googleDocsFiles: () => request<DriveFile[]>("/api/integrations/google-docs/files"),
+    googleDocsCreate: (name: string, type: string) =>
+      request<{ id: string; url: string }>("/api/integrations/google-docs/create", {
+        method: "POST",
+        body: JSON.stringify({ name, type }),
+      }),
+    calendarEvents: (days = 7) =>
+      request<CalendarEvent[]>(`/api/integrations/google-calendar/events?days=${days}`),
   },
   sync: {
     status: () =>

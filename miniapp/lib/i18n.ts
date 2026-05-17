@@ -100,6 +100,24 @@ const ru = {
   sync_password_placeholder: "Облачный пароль",
 
   settings_integrations_title: "Интеграции",
+
+  nav_integrations: "Сервисы",
+  integrations_empty: "Нет подключённых сервисов",
+  integrations_connect_hint: "Подключите сервисы в настройках",
+  notion_section_capture: "Заметки",
+  notion_section_task: "Задачи",
+  notion_section_meetings: "Встречи",
+  notion_save: "Сохранить",
+  notion_saved: "Сохранено",
+  notion_recent: "Последние страницы",
+  notion_open: "Открыть →",
+  gdocs_new_doc: "Новый документ",
+  gdocs_new_sheet: "Новая таблица",
+  gdocs_recent: "Последние файлы",
+  gdocs_name_placeholder: "Название",
+  gdocs_create: "Создать",
+  calendar_upcoming: "Ближайшие события",
+  calendar_no_events: "Нет событий на следующие 7 дней",
 } as const;
 
 const en: Record<keyof typeof ru, string> = {
@@ -202,6 +220,24 @@ const en: Record<keyof typeof ru, string> = {
   sync_password_placeholder: "Cloud password",
 
   settings_integrations_title: "Integrations",
+
+  nav_integrations: "Services",
+  integrations_empty: "No connected services",
+  integrations_connect_hint: "Connect services in Settings",
+  notion_section_capture: "Notes",
+  notion_section_task: "Tasks",
+  notion_section_meetings: "Meetings",
+  notion_save: "Save",
+  notion_saved: "Saved",
+  notion_recent: "Recent pages",
+  notion_open: "Open →",
+  gdocs_new_doc: "New document",
+  gdocs_new_sheet: "New spreadsheet",
+  gdocs_recent: "Recent files",
+  gdocs_name_placeholder: "Name",
+  gdocs_create: "Create",
+  calendar_upcoming: "Upcoming events",
+  calendar_no_events: "No events in the next 7 days",
 };
 
 const strings = { ru, en } as const;
