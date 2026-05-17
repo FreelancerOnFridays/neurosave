@@ -525,6 +525,7 @@ async def _process_owner_text(
 
     # ── Email ─────────────────────────────────────────────────────────────────
     if parsed.is_email and parsed.recipients:
+        import re as _re
         from services import gmail as gmail_svc
         from services.ai import generate_dispatch_message
 
@@ -536,13 +537,20 @@ async def _process_owner_text(
             return
 
         recipient_name = parsed.recipients[0]
-        contacts = await contact_repo.find_contacts_by_name(session, owner_id, recipient_name)
-        contact = contacts[0] if contacts else None
 
-        # Email from contact record, fallback to saved cfg mapping
-        email_addr = (contact.email or None) if contact else None
-        if not email_addr:
-            email_addr = await cfg_repo.get_config(session, owner_id, f"email_for:{recipient_name.lower()}")
+        # If recipient looks like a direct email address — use it immediately
+        email_direct = _re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", recipient_name.strip())
+        if email_direct:
+            email_addr: str | None = recipient_name.strip()
+            contact = None
+        else:
+            contacts = await contact_repo.find_contacts_by_name(session, owner_id, recipient_name)
+            contact = contacts[0] if contacts else None
+
+            # Email from contact record, fallback to saved cfg mapping
+            email_addr = (contact.email or None) if contact else None
+            if not email_addr:
+                email_addr = await cfg_repo.get_config(session, owner_id, f"email_for:{recipient_name.lower()}")
 
         if not email_addr:
             _pending_email[owner_id] = {
@@ -577,9 +585,9 @@ async def _process_owner_text(
         )
         return
 
-    # ── Notion ────────────────────────────────────────────────────────────────
+    # ── Notion (integration removed) ─────────────────────────────────────────
     if parsed.is_notion:
-        await _handle_notion(message, parsed, owner_id, session)
+        await message.answer("ℹ️ Интеграция с Notion отключена.")
         return
 
     # ── Google Docs / Sheets ──────────────────────────────────────────────────

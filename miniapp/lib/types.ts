@@ -72,19 +72,32 @@ export interface GmailThread {
   is_reply: boolean;
 }
 
+export interface GmailAttachment {
+  filename: string;
+  attachment_id: string;
+  mime_type: string;
+  size: string;
+}
+
+export interface GmailMessage {
+  id: string;
+  thread_id: string;
+  subject: string;
+  from_: string;
+  to: string;
+  date: string;
+  body: string;
+  snippet: string;
+  attachments: GmailAttachment[];
+  is_reply: boolean;
+  message_id_header: string;
+}
+
 export interface ContactSyncStatus {
   last_sync: string | null;
   telethon_authorized: boolean;
   telethon_configured: boolean;
   contact_count: number;
-}
-
-export interface NotionPage {
-  id: string;
-  title: string;
-  url: string;
-  section: string;
-  created_time: string;
 }
 
 export interface IntegrationStatus {
@@ -97,7 +110,6 @@ export interface IntegrationStatus {
 export interface IntegrationsStatus {
   google_calendar: IntegrationStatus;
   gmail: IntegrationStatus;
-  notion: IntegrationStatus;
   google_docs: IntegrationStatus;
 }
 

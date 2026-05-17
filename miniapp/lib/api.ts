@@ -5,10 +5,10 @@ import type {
   ContactSyncStatus,
   DriveFile,
   GhostStatus,
+  GmailMessage,
   GmailThread,
   Inquiry,
   IntegrationsStatus,
-  NotionPage,
   Task,
   TaskStatus,
 } from "./types";
@@ -130,20 +130,14 @@ export const api = {
     gmailDisconnect: () => request<void>("/api/integrations/gmail", { method: "DELETE" }),
     gmailThreads: (limit = 20) =>
       request<GmailThread[]>(`/api/integrations/gmail/threads?limit=${limit}`),
-    notionAuthUrl: () => request<{ url: string }>("/api/integrations/notion/auth-url"),
-    notionDisconnect: () => request<void>("/api/integrations/notion", { method: "DELETE" }),
-    notionCapture: (title: string, content: string, section: string = "capture") =>
-      request<{ page_id: string; url: string }>("/api/integrations/notion/capture", {
+    gmailMessage: (id: string) =>
+      request<GmailMessage>(`/api/integrations/gmail/messages/${id}`),
+    gmailSend: (body: { to: string; subject: string; body: string; thread_id?: string | null; in_reply_to?: string | null }) =>
+      request<{ id: string }>("/api/integrations/gmail/send", {
         method: "POST",
-        body: JSON.stringify({ title, content, section }),
-      }),
-    notionPages: () => request<NotionPage[]>("/api/integrations/notion/pages"),
-    notionSections: () => request<Record<string, string>>("/api/integrations/notion/sections"),
-    notionSectionsUpdate: (body: { capture: string; task: string; meeting_notes: string }) =>
-      request<void>("/api/integrations/notion/sections", {
-        method: "PUT",
         body: JSON.stringify(body),
       }),
+    redirectUris: () => request<{ base_url: string; redirect_uris: string[] }>("/api/integrations/redirect-uris"),
     googleDocsAuthUrl: () => request<{ url: string }>("/api/integrations/google-docs/auth-url"),
     googleDocsDisconnect: () => request<void>("/api/integrations/google-docs", { method: "DELETE" }),
     googleDocsFiles: () => request<DriveFile[]>("/api/integrations/google-docs/files"),

@@ -60,7 +60,6 @@ class IntegrationStatus(BaseModel):
 class IntegrationsStatusOut(BaseModel):
     google_calendar: IntegrationStatus
     gmail: IntegrationStatus
-    notion: IntegrationStatus
     google_docs: IntegrationStatus
 
 
@@ -133,13 +132,6 @@ async def integrations_status(
         email=gmail_row.email if gmail_row else None,
         scopes=(gmail_row.scopes or "").split() if gmail_row else [],
     )
-    notion_row = await oauth_repo.get_token(session, owner_id, "notion")
-    notion_status = IntegrationStatus(
-        provider="notion",
-        connected=notion_row is not None,
-        email=notion_row.email if notion_row else None,
-        scopes=[],
-    )
     gdocs_row = await oauth_repo.get_token(session, owner_id, "google_docs")
     gdocs_status = IntegrationStatus(
         provider="google_docs",
@@ -150,7 +142,6 @@ async def integrations_status(
     return IntegrationsStatusOut(
         google_calendar=google_status,
         gmail=gmail_status,
-        notion=notion_status,
         google_docs=gdocs_status,
     )
 
@@ -445,179 +436,6 @@ async def gmail_disconnect(
 
 # ── Notion ────────────────────────────────────────────────────────────────────
 
-_NOTION_SUCCESS_HTML = """<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Notion подключён</title>
-  <style>
-    body {{ font-family: system-ui, sans-serif; display: flex; flex-direction: column;
-           align-items: center; justify-content: center; min-height: 100vh;
-           margin: 0; background: #f0fdf4; color: #166534; }}
-    h1 {{ font-size: 1.5rem; margin-bottom: .5rem; }}
-    p {{ color: #15803d; font-size: .95rem; max-width: 360px; text-align: center; }}
-    a {{ display: inline-block; margin-top: 1.5rem; padding: .75rem 1.5rem;
-         background: #16a34a; color: #fff; border-radius: 12px;
-         text-decoration: none; font-weight: 600; }}
-  </style>
-</head>
-<body>
-  <h1>✅ Notion подключён!</h1>
-  <p>Вернитесь в Telegram. Отправьте боту ID базы Notion командой: /notion_db <ID></p>
-  <a href="https://t.me/neurosavebot">Открыть NeuroSave</a>
-</body>
-</html>"""
-
-
-@router.get("/notion/auth-url", response_model=AuthUrlOut)
-async def notion_auth_url(
-    owner_id: int = Depends(get_owner_id),
-) -> AuthUrlOut:
-    if not settings.notion_client_id:
-        raise HTTPException(status_code=503, detail="Notion OAuth not configured")
-
-    state = _make_state(owner_id)
-    redirect_uri = f"{settings.api_base_url}/api/integrations/notion/callback"
-    url = (
-        f"https://api.notion.com/v1/oauth/authorize"
-        f"?client_id={settings.notion_client_id}"
-        f"&response_type=code"
-        f"&owner=user"
-        f"&redirect_uri={redirect_uri}"
-        f"&state={state}"
-    )
-    return AuthUrlOut(url=url)
-
-
-@router.get("/notion/callback", response_class=HTMLResponse)
-async def notion_callback(
-    code: str | None = Query(default=None),
-    state: str | None = Query(default=None),
-    error: str | None = Query(default=None),
-    session: AsyncSession = Depends(get_db),
-) -> HTMLResponse:
-    if error:
-        return HTMLResponse(_ERROR_HTML.format(error=error), status_code=400)
-    if not code or not state:
-        return HTMLResponse(_ERROR_HTML.format(error="Отсутствуют параметры code/state"), status_code=400)
-
-    owner_id, _verifier = _consume_state(state)
-    if owner_id is None:
-        return HTMLResponse(_ERROR_HTML.format(error="Неверный или истёкший state-параметр"), status_code=400)
-
-    try:
-        import httpx
-        from db.repositories import oauth as oauth_repo
-
-        redirect_uri = f"{settings.api_base_url}/api/integrations/notion/callback"
-        credentials = base64.b64encode(
-            f"{settings.notion_client_id}:{settings.notion_client_secret}".encode()
-        ).decode()
-
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                "https://api.notion.com/v1/oauth/token",
-                headers={
-                    "Authorization": f"Basic {credentials}",
-                    "Content-Type": "application/json",
-                    "Notion-Version": "2022-06-28",
-                },
-                json={
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "redirect_uri": redirect_uri,
-                },
-            )
-            resp.raise_for_status()
-            data: dict[str, Any] = resp.json()
-
-        access_token: str = data["access_token"]
-        workspace_name: str = data.get("workspace_name", "")
-
-        await oauth_repo.upsert_token(
-            session,
-            owner_id,
-            "notion",
-            access_token=access_token,
-            email=workspace_name or None,
-        )
-        await session.commit()
-        return HTMLResponse(_NOTION_SUCCESS_HTML, status_code=200)
-
-    except Exception as e:
-        logger.exception("Notion OAuth callback error for owner %d: %s", owner_id, e)
-        return HTMLResponse(_ERROR_HTML.format(error=str(e)), status_code=500)
-
-
-@router.delete("/notion", status_code=204)
-async def notion_disconnect(
-    owner_id: int = Depends(get_owner_id),
-    session: AsyncSession = Depends(get_db),
-) -> None:
-    from db.repositories import oauth as oauth_repo
-    from db.repositories import integration_configs as cfg_repo
-
-    await oauth_repo.delete_token(session, owner_id, "notion")
-    for key in ["notion_root_page_id", "notion_section_capture", "notion_section_task", "notion_section_meeting_notes"]:
-        await cfg_repo.delete_config(session, owner_id, key)
-    await session.commit()
-
-
-class NotionCaptureIn(BaseModel):
-    title: str
-    content: str = ""
-    section: str = "capture"
-
-
-class NotionCaptureOut(BaseModel):
-    page_id: str
-    url: str
-
-
-@router.post("/notion/capture", response_model=NotionCaptureOut)
-async def notion_capture(
-    body: NotionCaptureIn,
-    owner_id: int = Depends(get_owner_id),
-    session: AsyncSession = Depends(get_db),
-) -> NotionCaptureOut:
-    from services import notion as notion_svc
-
-    token = await notion_svc.get_notion_token(owner_id, session)
-    if not token:
-        raise HTTPException(status_code=400, detail="Notion not connected")
-
-    section = body.section if body.section in ("capture", "task", "meeting_notes") else "capture"
-    section_id = await notion_svc.ensure_section_page(token, owner_id, section, session)
-    await session.commit()
-
-    page_id, url = await notion_svc.create_page(token, section_id, body.title, body.content)
-    return NotionCaptureOut(page_id=page_id, url=url)
-
-
-class NotionPageOut(BaseModel):
-    id: str
-    title: str
-    url: str
-    section: str
-    created_time: str
-
-
-@router.get("/notion/pages", response_model=list[NotionPageOut])
-async def notion_pages(
-    owner_id: int = Depends(get_owner_id),
-    session: AsyncSession = Depends(get_db),
-) -> list[NotionPageOut]:
-    from services import notion as notion_svc
-
-    token = await notion_svc.get_notion_token(owner_id, session)
-    if not token:
-        raise HTTPException(status_code=400, detail="Notion not connected")
-
-    pages = await notion_svc.list_all_recent_pages(token, owner_id, session)
-    return [NotionPageOut(**p) for p in pages]
-
-
 # ── Google Docs & Sheets ──────────────────────────────────────────────────────
 
 _GDOCS_SUCCESS_HTML = """<!DOCTYPE html>
@@ -860,47 +678,97 @@ async def gmail_threads(
     ) for m in items]
 
 
-# ── Notion section labels ─────────────────────────────────────────────────────
+# ── Gmail full message + send ─────────────────────────────────────────────────
 
-_NOTION_DEFAULT_LABELS: dict[str, str] = {
-    "capture": "Заметки",
-    "task": "Задачи",
-    "meeting_notes": "Встречи",
-}
-
-
-class NotionSectionNamesIn(BaseModel):
-    capture: str
-    task: str
-    meeting_notes: str
+class GmailAttachmentOut(BaseModel):
+    filename: str
+    attachment_id: str
+    mime_type: str
+    size: str
 
 
-@router.get("/notion/sections", response_model=dict[str, str])
-async def get_notion_sections(
+class GmailMessageOut(BaseModel):
+    id: str
+    thread_id: str
+    subject: str
+    from_: str
+    to: str
+    date: str
+    body: str
+    snippet: str
+    attachments: list[GmailAttachmentOut]
+    is_reply: bool
+    message_id_header: str
+
+
+@router.get("/gmail/messages/{message_id}", response_model=GmailMessageOut)
+async def gmail_message(
+    message_id: str,
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> GmailMessageOut:
+    from services import gmail as gmail_svc
+
+    service = await gmail_svc.get_gmail_service(owner_id, session)
+    if not service:
+        raise HTTPException(status_code=400, detail="Gmail not connected")
+
+    msg = await gmail_svc.get_message_full(service, message_id)
+    return GmailMessageOut(
+        id=msg["id"],
+        thread_id=msg["thread_id"],
+        subject=msg["subject"],
+        from_=msg["from_"],
+        to=msg["to"],
+        date=msg["date"],
+        body=msg["body"],
+        snippet=msg["snippet"],
+        attachments=[GmailAttachmentOut(**a) for a in msg["attachments"]],
+        is_reply=msg["is_reply"],
+        message_id_header=msg["message_id_header"],
+    )
+
+
+class GmailSendIn(BaseModel):
+    to: str
+    subject: str
+    body: str
+    thread_id: str | None = None
+    in_reply_to: str | None = None
+
+
+@router.post("/gmail/send", response_model=dict[str, str])
+async def gmail_send(
+    body: GmailSendIn,
     owner_id: int = Depends(get_owner_id),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    from db.repositories import integration_configs as cfg_repo
+    from services import gmail as gmail_svc
 
-    result: dict[str, str] = {}
-    for key, default in _NOTION_DEFAULT_LABELS.items():
-        val = await cfg_repo.get_config(session, owner_id, f"notion_section_label_{key}")
-        result[key] = val or default
-    return result
+    service = await gmail_svc.get_gmail_service(owner_id, session)
+    if not service:
+        raise HTTPException(status_code=400, detail="Gmail not connected")
+
+    msg_id = await gmail_svc.send_reply(
+        service,
+        to=[body.to],
+        subject=body.subject,
+        body=body.body,
+        thread_id=body.thread_id,
+        in_reply_to=body.in_reply_to,
+    )
+    return {"id": msg_id}
 
 
-@router.put("/notion/sections", status_code=204)
-async def update_notion_sections(
-    body: NotionSectionNamesIn,
-    owner_id: int = Depends(get_owner_id),
-    session: AsyncSession = Depends(get_db),
-) -> None:
-    from db.repositories import integration_configs as cfg_repo
+# ── OAuth redirect URIs ────────────────────────────────────────────────────────
 
-    for key, val in [
-        ("capture", body.capture),
-        ("task", body.task),
-        ("meeting_notes", body.meeting_notes),
-    ]:
-        await cfg_repo.set_config(session, owner_id, f"notion_section_label_{key}", val.strip() or _NOTION_DEFAULT_LABELS[key])
-    await session.commit()
+@router.get("/redirect-uris")
+async def redirect_uris() -> dict[str, str | list[str]]:
+    """Return OAuth redirect URIs that must be registered in Google Cloud Console."""
+    base = settings.api_base_url.rstrip("/")
+    uris = [
+        f"{base}/api/integrations/google/callback",
+        f"{base}/api/integrations/gmail/callback",
+        f"{base}/api/integrations/google-docs/callback",
+    ]
+    return {"base_url": base, "redirect_uris": uris}

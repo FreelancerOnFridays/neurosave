@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import useSWR from "swr";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { NotionWorkspace } from "@/components/integrations/NotionWorkspace";
 import { GoogleDocsWorkspace } from "@/components/integrations/GoogleDocsWorkspace";
 import { CalendarWorkspace } from "@/components/integrations/CalendarWorkspace";
 import { GmailWorkspace } from "@/components/integrations/GmailWorkspace";
@@ -13,10 +12,9 @@ import type { IntegrationsStatus } from "@/lib/types";
 
 const WORKSPACE_KEY = "integrations_active_pill";
 
-type PillId = "notion" | "google_docs" | "google_calendar" | "gmail";
+type PillId = "google_docs" | "google_calendar" | "gmail";
 
 const ALL_PILLS: { id: PillId; label: string; icon: string }[] = [
-  { id: "notion", label: "Notion", icon: "📝" },
   { id: "google_docs", label: "Docs & Sheets", icon: "📄" },
   { id: "google_calendar", label: "Calendar", icon: "📅" },
   { id: "gmail", label: "Gmail", icon: "✉️" },
@@ -24,7 +22,6 @@ const ALL_PILLS: { id: PillId; label: string; icon: string }[] = [
 
 function connectedPills(status: IntegrationsStatus) {
   return ALL_PILLS.filter((p) => {
-    if (p.id === "notion") return status.notion.connected;
     if (p.id === "google_docs") return status.google_docs.connected;
     if (p.id === "google_calendar") return status.google_calendar.connected;
     if (p.id === "gmail") return status.gmail.connected;
@@ -103,7 +100,6 @@ export default function IntegrationsPage() {
             </div>
 
             <div className="mt-4">
-              {active === "notion" && <NotionWorkspace />}
               {active === "google_docs" && <GoogleDocsWorkspace />}
               {active === "google_calendar" && <CalendarWorkspace />}
               {active === "gmail" && <GmailWorkspace />}
