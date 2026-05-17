@@ -20,6 +20,11 @@ from config import settings
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Allow Google to return full scope URLs instead of short aliases (e.g. "email" → userinfo.email)
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+# Allow OAuth over HTTP in dev (no-op in prod behind HTTPS reverse proxy)
+os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
+
 # In-memory state store: state_token → (owner_id, expires_at, code_verifier_or_none)
 _oauth_states: dict[str, tuple[int, float, str | None]] = {}
 
@@ -264,7 +269,6 @@ async def google_callback(
             scopes=GOOGLE_SCOPES,
             redirect_uri=redirect_uri,
         )
-        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
         flow.fetch_token(code=code, code_verifier=code_verifier)
         creds = flow.credentials
 
@@ -394,7 +398,6 @@ async def gmail_callback(
     try:
         from db.repositories import oauth as oauth_repo
 
-        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
         redirect_uri = f"{settings.api_base_url}/api/integrations/gmail/callback"
         flow = _make_google_flow(redirect_uri, GMAIL_SCOPES)
         flow.fetch_token(code=code, code_verifier=code_verifier)
@@ -681,7 +684,6 @@ async def gdocs_callback(
     try:
         from db.repositories import oauth as oauth_repo
 
-        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
         redirect_uri = f"{settings.api_base_url}/api/integrations/google-docs/callback"
         flow = _make_google_flow(redirect_uri, GDOCS_SCOPES)
         flow.fetch_token(code=code, code_verifier=code_verifier)
