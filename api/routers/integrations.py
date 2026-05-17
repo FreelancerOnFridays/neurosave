@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
+import os
 import secrets
 import time
 from typing import Any
@@ -17,8 +20,8 @@ from config import settings
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# In-memory state store: state_token → (owner_id, expires_at)
-_oauth_states: dict[str, tuple[int, float]] = {}
+# In-memory state store: state_token → (owner_id, expires_at, code_verifier_or_none)
+_oauth_states: dict[str, tuple[int, float, str | None]] = {}
 
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
@@ -62,27 +65,46 @@ class AuthUrlOut(BaseModel):
 
 def _gc_states() -> None:
     now = time.time()
-    expired = [k for k, (_, exp) in _oauth_states.items() if exp < now]
+    expired = [k for k, (_, exp, _v) in _oauth_states.items() if exp < now]
     for k in expired:
         del _oauth_states[k]
 
 
+def _generate_pkce_pair() -> tuple[str, str]:
+    """Return (code_verifier, code_challenge_S256)."""
+    verifier = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode()
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode()).digest()
+    ).rstrip(b"=").decode()
+    return verifier, challenge
+
+
 def _make_state(owner_id: int) -> str:
+    """Create state token without PKCE (used for Notion)."""
     _gc_states()
     token = secrets.token_urlsafe(32)
-    _oauth_states[token] = (owner_id, time.time() + 600)
+    _oauth_states[token] = (owner_id, time.time() + 600, None)
     return token
 
 
-def _consume_state(state: str) -> int | None:
+def _make_state_pkce(owner_id: int) -> tuple[str, str, str]:
+    """Create state token with PKCE. Returns (state, code_verifier, code_challenge)."""
+    _gc_states()
+    token = secrets.token_urlsafe(32)
+    verifier, challenge = _generate_pkce_pair()
+    _oauth_states[token] = (owner_id, time.time() + 600, verifier)
+    return token, verifier, challenge
+
+
+def _consume_state(state: str) -> tuple[int, str | None] | tuple[None, None]:
     _gc_states()
     entry = _oauth_states.pop(state, None)
     if entry is None:
-        return None
-    owner_id, expires_at = entry
+        return None, None
+    owner_id, expires_at, verifier = entry
     if time.time() > expires_at:
-        return None
-    return owner_id
+        return None, None
+    return owner_id, verifier
 
 
 @router.get("/status", response_model=IntegrationsStatusOut)
@@ -151,12 +173,14 @@ async def google_auth_url(
         scopes=GOOGLE_SCOPES,
         redirect_uri=redirect_uri,
     )
-    state = _make_state(owner_id)
+    state, _verifier, challenge = _make_state_pkce(owner_id)
     auth_url, _ = flow.authorization_url(
         access_type="offline",
         prompt="consent",
         state=state,
         include_granted_scopes="true",
+        code_challenge=challenge,
+        code_challenge_method="S256",
     )
     return AuthUrlOut(url=auth_url)
 
@@ -218,7 +242,7 @@ async def google_callback(
     if not code or not state:
         return HTMLResponse(_ERROR_HTML.format(error="Отсутствуют параметры code/state"), status_code=400)
 
-    owner_id = _consume_state(state)
+    owner_id, code_verifier = _consume_state(state)
     if owner_id is None:
         return HTMLResponse(_ERROR_HTML.format(error="Неверный или истёкший state-параметр"), status_code=400)
 
@@ -240,9 +264,8 @@ async def google_callback(
             scopes=GOOGLE_SCOPES,
             redirect_uri=redirect_uri,
         )
-        import os
         os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-        flow.fetch_token(code=code)
+        flow.fetch_token(code=code, code_verifier=code_verifier)
         creds = flow.credentials
 
         # Get user email
@@ -340,12 +363,14 @@ async def gmail_auth_url(
 
     redirect_uri = f"{settings.api_base_url}/api/integrations/gmail/callback"
     flow = _make_google_flow(redirect_uri, GMAIL_SCOPES)
-    state = _make_state(owner_id)
+    state, _verifier, challenge = _make_state_pkce(owner_id)
     auth_url, _ = flow.authorization_url(
         access_type="offline",
         prompt="consent",
         state=state,
         include_granted_scopes="true",
+        code_challenge=challenge,
+        code_challenge_method="S256",
     )
     return AuthUrlOut(url=auth_url)
 
@@ -362,18 +387,17 @@ async def gmail_callback(
     if not code or not state:
         return HTMLResponse(_ERROR_HTML.format(error="Отсутствуют параметры code/state"), status_code=400)
 
-    owner_id = _consume_state(state)
+    owner_id, code_verifier = _consume_state(state)
     if owner_id is None:
         return HTMLResponse(_ERROR_HTML.format(error="Неверный или истёкший state-параметр"), status_code=400)
 
     try:
-        import os
         from db.repositories import oauth as oauth_repo
 
         os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
         redirect_uri = f"{settings.api_base_url}/api/integrations/gmail/callback"
         flow = _make_google_flow(redirect_uri, GMAIL_SCOPES)
-        flow.fetch_token(code=code)
+        flow.fetch_token(code=code, code_verifier=code_verifier)
         creds = flow.credentials
 
         user_email: str | None = None
@@ -475,12 +499,11 @@ async def notion_callback(
     if not code or not state:
         return HTMLResponse(_ERROR_HTML.format(error="Отсутствуют параметры code/state"), status_code=400)
 
-    owner_id = _consume_state(state)
+    owner_id, _verifier = _consume_state(state)
     if owner_id is None:
         return HTMLResponse(_ERROR_HTML.format(error="Неверный или истёкший state-параметр"), status_code=400)
 
     try:
-        import base64
         import httpx
         from db.repositories import oauth as oauth_repo
 
@@ -628,11 +651,13 @@ async def gdocs_auth_url(
 
     redirect_uri = f"{settings.api_base_url}/api/integrations/google-docs/callback"
     flow = _make_google_flow(redirect_uri, GDOCS_SCOPES)
-    state = _make_state(owner_id)
+    state, _verifier, challenge = _make_state_pkce(owner_id)
     auth_url, _ = flow.authorization_url(
         access_type="offline",
         prompt="consent",
         state=state,
+        code_challenge=challenge,
+        code_challenge_method="S256",
     )
     return AuthUrlOut(url=auth_url)
 
@@ -649,18 +674,17 @@ async def gdocs_callback(
     if not code or not state:
         return HTMLResponse(_ERROR_HTML.format(error="Отсутствуют параметры code/state"), status_code=400)
 
-    owner_id = _consume_state(state)
+    owner_id, code_verifier = _consume_state(state)
     if owner_id is None:
         return HTMLResponse(_ERROR_HTML.format(error="Неверный или истёкший state-параметр"), status_code=400)
 
     try:
-        import os
         from db.repositories import oauth as oauth_repo
 
         os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
         redirect_uri = f"{settings.api_base_url}/api/integrations/google-docs/callback"
         flow = _make_google_flow(redirect_uri, GDOCS_SCOPES)
-        flow.fetch_token(code=code)
+        flow.fetch_token(code=code, code_verifier=code_verifier)
         creds = flow.credentials
 
         user_email: str | None = None
