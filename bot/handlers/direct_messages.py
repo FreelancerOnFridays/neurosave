@@ -934,7 +934,7 @@ async def _handle_pending_email_address(
     return True
 
 
-@router.message(F.document | F.photo)
+@router.message(F.document | F.photo | F.video)
 async def handle_owner_attachment(message: Message, bot: Bot, session: AsyncSession) -> None:
     if message.from_user is None:
         return
@@ -963,6 +963,10 @@ async def handle_owner_attachment(message: Message, bot: Bot, session: AsyncSess
         file_id = message.photo[-1].file_id
         filename = "photo.jpg"
         mime_type = "image/jpeg"
+    elif message.video:
+        file_id = message.video.file_id
+        filename = message.video.file_name or "video.mp4"
+        mime_type = message.video.mime_type or "video/mp4"
 
     if not file_id:
         return
