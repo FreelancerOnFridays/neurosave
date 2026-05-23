@@ -982,6 +982,8 @@ async def handle_privacy_accept(query: CallbackQuery, session: AsyncSession) -> 
         return
     owner_id = query.from_user.id
     await us_repo.accept_privacy(session, owner_id)
+    # Commit immediately so the acceptance is persisted regardless of what happens next
+    await session.commit()
     await query.answer("✅ Принято")
     if isinstance(query.message, TgMessage):
         try:
@@ -991,26 +993,29 @@ async def handle_privacy_accept(query: CallbackQuery, session: AsyncSession) -> 
     # Show the normal welcome screen
     from aiogram.types import WebAppInfo
     from config import settings as cfg
-    await query.bot.send_message(  # type: ignore[union-attr]
-        chat_id=owner_id,
-        text=(
-            "🧠 <b>НейроSave — ИИ-помощник, который экономит ваше время и нейроресурс</b>\n\n"
-            "Забудьте про потерянные задачи, пропущенные письма и утренний хаос.\n\n"
-            "📌 <b>Задачи</b> — сам извлекает дедлайны из чатов и напоминает вовремя\n"
-            "👻 <b>Ghost-режим</b> — отвечает за вас пока вы заняты, собирает суть вопросов\n"
-            "🔍 <b>Память чатов</b> — находит любую договорённость за секунды по запросу\n"
-            "📨 <b>Gmail</b> — важные письма прямо в Telegram, ответ без смены приложения\n"
-            "☀️ <b>Утренний брифинг</b> — дедлайны, просрочки и ночная сводка каждое утро\n\n"
-            "━━━━━━━━━━━━━━━━━\n"
-            "⚙️ <b>Дайте боту доступ к чатам</b> — без этого бот не сможет работать.\n"
-            "Инструкция по кнопке ниже 👇"
-        ),
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="📖 Инструкция к боту", callback_data="tut:0"),
-            InlineKeyboardButton(text="📱 Мини-приложение", web_app=WebAppInfo(url=cfg.miniapp_url)),
-        ]]),
-    )
+    try:
+        await query.bot.send_message(  # type: ignore[union-attr]
+            chat_id=owner_id,
+            text=(
+                "🧠 <b>НейроSave — ИИ-помощник, который экономит ваше время и нейроресурс</b>\n\n"
+                "Забудьте про потерянные задачи, пропущенные письма и утренний хаос.\n\n"
+                "📌 <b>Задачи</b> — сам извлекает дедлайны из чатов и напоминает вовремя\n"
+                "👻 <b>Ghost-режим</b> — отвечает за вас пока вы заняты, собирает суть вопросов\n"
+                "🔍 <b>Память чатов</b> — находит любую договорённость за секунды по запросу\n"
+                "📨 <b>Gmail</b> — важные письма прямо в Telegram, ответ без смены приложения\n"
+                "☀️ <b>Утренний брифинг</b> — дедлайны, просрочки и ночная сводка каждое утро\n\n"
+                "━━━━━━━━━━━━━━━━━\n"
+                "⚙️ <b>Дайте боту доступ к чатам</b> — без этого бот не сможет работать.\n"
+                "Инструкция по кнопке ниже 👇"
+            ),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="📖 Инструкция к боту", callback_data="tut:0"),
+                InlineKeyboardButton(text="📱 Мини-приложение", web_app=WebAppInfo(url=cfg.miniapp_url)),
+            ]]),
+        )
+    except Exception:
+        logger.exception("handle_privacy_accept: failed to send welcome message to %d", owner_id)
 
 
 @router.callback_query(F.data == "delete_data_confirm")
