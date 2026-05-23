@@ -38,6 +38,14 @@ async def cmd_start(message: Message, session: AsyncSession) -> None:
         await message.answer(_POLICY_TEXT, parse_mode="HTML", reply_markup=_ACCEPT_KEYBOARD)
         return
 
+    buttons: list[InlineKeyboardButton] = [
+        InlineKeyboardButton(text="📖 Инструкция к боту", callback_data="tut:0"),
+    ]
+    if settings.miniapp_url.startswith("https://"):
+        buttons.append(InlineKeyboardButton(
+            text="📱 Мини-приложение",
+            web_app=WebAppInfo(url=settings.miniapp_url),
+        ))
     await message.answer(
         "🧠 <b>НейроSave — ИИ-помощник, который экономит ваше время и нейроресурс</b>\n\n"
         "Забудьте про потерянные задачи, пропущенные письма и утренний хаос.\n\n"
@@ -50,24 +58,16 @@ async def cmd_start(message: Message, session: AsyncSession) -> None:
         "⚙️ <b>Дайте боту доступ к чатам</b> — без этого бот не сможет работать.\n"
         "Инструкция по кнопке ниже 👇",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[
-                InlineKeyboardButton(
-                    text="📖 Инструкция к боту",
-                    callback_data="tut:0",
-                ),
-                InlineKeyboardButton(
-                    text="📱 Мини-приложение",
-                    web_app=WebAppInfo(url=settings.miniapp_url),
-                ),
-            ]]
-        ),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[buttons]),
     )
 
 
 @router.message(Command("app"))
 async def cmd_app(message: Message) -> None:
     if message.from_user is None:
+        return
+    if not settings.miniapp_url.startswith("https://"):
+        await message.answer("📱 Мини-приложение: " + settings.miniapp_url)
         return
     await message.answer(
         "📱 NeuroSave Mini App:",
