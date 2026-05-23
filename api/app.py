@@ -7,7 +7,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.auth import get_owner_id
-from api.routers import contacts, ghost, integrations, reminders, settings, sync, tasks
+from api.routers import bot, contacts, ghost, integrations, reminders, settings, tasks
 from config import settings as app_settings
 
 
@@ -37,13 +37,13 @@ def create_app() -> FastAPI:
             allow_headers=["Authorization", "Content-Type"],
         )
 
+    app.include_router(bot.router, prefix="/api/bot", tags=["bot"])
     app.include_router(integrations.router, prefix="/api/integrations", tags=["integrations"])
     app.include_router(reminders.router, prefix="/api/reminders", tags=["reminders"])
     app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
     app.include_router(ghost.router, prefix="/api/ghost", tags=["ghost"])
     app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
     app.include_router(contacts.router, prefix="/api/contacts", tags=["contacts"])
-    app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
 
     @app.get("/api/me")
     async def me(user_id: int = Depends(get_owner_id)) -> dict[str, int]:

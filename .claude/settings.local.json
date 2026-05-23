@@ -127,7 +127,18 @@
       "Bash(Remove-Item *)",
       "Bash(Select-Object -First 20)",
       "Bash(xargs grep -l \"gmail\")",
-      "Bash(del \"components\\\\integrations\\\\NotionQuickCapture.tsx\" \"components\\\\integrations\\\\NotionWorkspace.tsx\")"
+      "Bash(del \"components\\\\integrations\\\\NotionQuickCapture.tsx\" \"components\\\\integrations\\\\NotionWorkspace.tsx\")",
+      "Bash(xargs grep -l \"nav_today\\\\|today_my_section\")",
+      "Bash(python *)",
+      "Bash(Get-ChildItem -Path \"D:\\\\Work\\\\NeuroSave\" -Recurse -Name)",
+      "Bash(Select-Object -First 30)",
+      "Bash(\\\\.ts\")",
+      "Bash(xargs grep -l \"Modal\\\\|Sheet\\\\|Dialog\")",
+      "Bash(xargs grep -l \"api/sync\")",
+      "Read(//mnt/d/Work/**)",
+      "Bash(grep -rn \"telethon\\\\|sync_contacts\\\\|contact_sync\\\\|TelegramClient\" --include=\"*.py\" --include=\"*.ts\" --include=\"*.tsx\" -l)",
+      "Bash(Write-Host \"Done\")",
+      "PowerShell(winget install *)"
     ]
   }
 }

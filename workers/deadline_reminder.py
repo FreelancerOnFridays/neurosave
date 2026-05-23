@@ -35,7 +35,7 @@ async def send_deadline_reminders(bot: Bot) -> None:
             for task in upcoming:
                 deadline_str = task.deadline.strftime("%H:%M") if task.deadline else ""
                 assignee = f" ({task.assignee_name})" if task.assignee_name else ""
-                lines.append(f"• {task.description}{assignee} — {deadline_str}")
+                lines.append(f"• {task.description}{assignee} — дедлайн в {deadline_str}")
             try:
                 await bot.send_message(chat_id=owner_id, text="\n".join(lines), parse_mode="HTML")
             except Exception:

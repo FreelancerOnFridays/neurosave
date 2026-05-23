@@ -14,3 +14,10 @@ wheels/
 
 # Runtime config (contains bot token, API keys)
 bot_config.json
+
+# Telethon session files (contain MTProto auth tokens — never commit)
+*.session
+*.session-journal
+
+# Logs
+*.log

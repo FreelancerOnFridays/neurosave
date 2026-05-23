@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import Date, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -173,13 +173,16 @@ async def delete_task(
     await session.flush()
 
 
-@router.post("/{task_id}/nudge", status_code=204)
-async def nudge_task(
+class NudgeBody(BaseModel):
+    text: str | None = None
+
+
+@router.get("/{task_id}/nudge/preview")
+async def nudge_preview(
     task_id: int,
-    request: Request,
     owner_id: int = Depends(get_owner_id),
     session: AsyncSession = Depends(get_db),
-) -> None:
+) -> dict[str, str]:
     task = await task_repo.get_task(session, task_id)
     if task is None or task.owner_id != owner_id:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -198,6 +201,38 @@ async def nudge_task(
         )
     except Exception:
         nudge_text = task.description
+
+    return {"text": nudge_text}
+
+
+@router.post("/{task_id}/nudge", status_code=204)
+async def nudge_task(
+    task_id: int,
+    request: Request,
+    body: NudgeBody = Body(default_factory=NudgeBody),
+    owner_id: int = Depends(get_owner_id),
+    session: AsyncSession = Depends(get_db),
+) -> None:
+    task = await task_repo.get_task(session, task_id)
+    if task is None or task.owner_id != owner_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if body.text:
+        nudge_text = body.text
+    else:
+        us = await us_repo.get_or_create(session, owner_id)
+        recent = await msg_repo.get_recent_owner_messages(session, owner_id)
+        style = await get_style_profile(owner_id, [m.text for m in recent])
+        try:
+            nudge_text = await generate_nudge_message(
+                description=task.description,
+                assignee_name=task.assignee_name,
+                deadline=task.deadline,
+                language=us.language,
+                style_profile=style,
+            )
+        except Exception:
+            nudge_text = task.description
 
     bot = request.app.state.bot
     await bot.send_message(

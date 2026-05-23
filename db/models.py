@@ -23,6 +23,7 @@ class InquiryCategory(str, enum.Enum):
     sales = "Sales"
     team = "Team"
     spam = "Spam"
+    normal = "Normal"
 
 
 class Task(Base):
@@ -96,6 +97,9 @@ class GhostSession(Base):
     away_message: Mapped[str | None] = mapped_column(Text)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     silent_mode: Mapped[bool] = mapped_column(default=False, nullable=False)
+    auto_off_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    excluded_contact_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), server_default="{}", nullable=False)
+    excluded_labels: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}", nullable=False)
 
 
 class UserSettings(Base):
@@ -108,6 +112,9 @@ class UserSettings(Base):
     brief_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     theme: Mapped[str] = mapped_column(String(16), default="auto", nullable=False)
     telethon_session: Mapped[str | None] = mapped_column(Text, nullable=True)
+    business_connection_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    last_brief_date: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    privacy_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -17,7 +17,7 @@ export function BottomNav() {
 
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 flex bg-tg-secondary border-t border-tg-hint/20"
+      className="fixed bottom-0 left-0 right-0 z-30 flex bg-tg-secondary border-t border-tg-hint/20"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       {NAV_ITEMS.map((item) => {

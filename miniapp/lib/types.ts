@@ -1,5 +1,5 @@
 export type TaskStatus = "open" | "done" | "cancelled";
-export type InquiryCategory = "Urgent" | "Sales" | "Team" | "Spam";
+export type InquiryCategory = "Urgent" | "Sales" | "Team" | "Spam" | "Normal";
 export type Theme = "auto" | "light" | "dark";
 
 export interface Task {
@@ -22,6 +22,9 @@ export interface GhostStatus {
   away_message: string | null;
   activated_at: string | null;
   silent_mode: boolean;
+  auto_off_at: string | null;
+  excluded_contact_ids: number[];
+  excluded_labels: string[];
 }
 
 export interface Inquiry {
@@ -32,10 +35,11 @@ export interface Inquiry {
   summary: string | null;
   category: InquiryCategory | null;
   created_at: string;
+  caller_labels: string[];
 }
 
 export interface AppSettings {
-  language: "ru" | "en";
+  language: "ru" | "en" | "ua";
   timezone: string;
   brief_time: string;
   brief_enabled: boolean;
@@ -95,9 +99,6 @@ export interface GmailMessage {
 }
 
 export interface ContactSyncStatus {
-  last_sync: string | null;
-  telethon_authorized: boolean;
-  telethon_configured: boolean;
   contact_count: number;
 }
 
@@ -111,16 +112,8 @@ export interface IntegrationStatus {
 export interface IntegrationsStatus {
   google_calendar: IntegrationStatus;
   gmail: IntegrationStatus;
-  google_docs: IntegrationStatus;
 }
 
-export interface DriveFile {
-  id: string;
-  name: string;
-  url: string;
-  type: "doc" | "sheet";
-  modified_time: string;
-}
 
 export interface CalendarEvent {
   id: string;

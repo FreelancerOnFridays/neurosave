@@ -5,7 +5,7 @@ import { InquiryCard } from "./InquiryCard";
 import { useLang } from "@/contexts/LanguageContext";
 import type { Inquiry, InquiryCategory } from "@/lib/types";
 
-const ORDER: InquiryCategory[] = ["Urgent", "Team", "Sales", "Spam"];
+const ORDER: InquiryCategory[] = ["Urgent", "Team", "Sales", "Normal", "Spam"];
 
 interface InquiryListProps {
   inquiries: Inquiry[];
@@ -19,6 +19,7 @@ export function InquiryList({ inquiries }: InquiryListProps) {
     Team: t("cat_team"),
     Sales: t("cat_sales"),
     Spam: t("cat_spam"),
+    Normal: t("cat_normal"),
   };
 
   if (inquiries.length === 0) {

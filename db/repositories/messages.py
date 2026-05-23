@@ -114,6 +114,26 @@ async def get_messages_in_range(
 
 
 @beartype
+async def get_messages_in_chat(
+    session: AsyncSession,
+    owner_id: int,
+    chat_id: int,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    limit: int = 100,
+) -> list[Message]:
+    """Return messages in a specific chat, optionally filtered by time range, in chronological order."""
+    stmt = select(Message).where(Message.owner_id == owner_id, Message.chat_id == chat_id)
+    if since is not None:
+        stmt = stmt.where(Message.timestamp >= since)
+    if until is not None:
+        stmt = stmt.where(Message.timestamp <= until)
+    stmt = stmt.order_by(Message.timestamp.asc()).limit(limit)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+@beartype
 async def set_embedding(
     session: AsyncSession,
     message_id: int,
@@ -130,13 +150,17 @@ async def search_similar(
     owner_id: int,
     query_embedding: list[float],
     limit: int = 10,
+    chat_id_filter: int | None = None,
 ) -> list[Message]:
+    conditions = [
+        Message.owner_id == owner_id,
+        Message.embedding.isnot(None),  # type: ignore[union-attr]
+    ]
+    if chat_id_filter is not None:
+        conditions.append(Message.chat_id == chat_id_filter)
     result = await session.execute(
         select(Message)
-        .where(
-            Message.owner_id == owner_id,
-            Message.embedding.isnot(None),  # type: ignore[union-attr]
-        )
+        .where(*conditions)
         .order_by(Message.embedding.cosine_distance(query_embedding))  # type: ignore[union-attr]
         .limit(limit)
     )

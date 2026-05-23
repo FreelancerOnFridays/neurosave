@@ -86,6 +86,11 @@ class ReminderItem(BaseModel):
     lead_description: str | None = None
 
 
+class RecipientMessage(BaseModel):
+    recipient: str
+    message: str
+
+
 class DispatchCommand(BaseModel):
     has_dispatch: bool
     is_reminder: bool = False
@@ -96,6 +101,7 @@ class DispatchCommand(BaseModel):
     recipients: list[str] = []
     literal_message: str | None = None
     message_intent: str | None = None
+    recipient_messages: list[RecipientMessage] = []
     scheduled_at_iso: str | None = None
     # reminder-specific fields (single, kept for compat)
     reminder_text: str | None = None
@@ -115,12 +121,6 @@ class DispatchCommand(BaseModel):
     email_body_intent: str | None = None
     email_literal_body: str | None = None
     email_has_attachment: bool = False
-    # google docs/sheets fields
-    is_gdocs: bool = False
-    gdocs_action: str | None = None  # "analyze_doc"|"analyze_sheet"|"unsupported"
-    gdocs_url: str | None = None     # Google Docs or Sheets URL, verbatim from message
-    gdocs_target_name: str | None = None
-    gdocs_content: str | None = None  # user's analysis question/intent
 
 
 class ReminderAction(BaseModel):
@@ -146,16 +146,23 @@ async def extract_task_from_message(text: str, language: str = "ru", tz_name: st
                     "This message was sent BY the owner TO a contact. "
                     "Determine if the owner is DELEGATING a task — i.e. asking or expecting the contact to DO something specific.\n\n"
                     "Set has_task=TRUE only when ALL of these hold:\n"
-                    "  1. There is a concrete action the CONTACT (not the owner) must perform.\n"
-                    "  2. The message uses imperative, obligation, or explicit request directed at the other person "
+                    "  1. There is a concrete action the CONTACT (not the owner, not a third party) must perform.\n"
+                    "  2. The message uses imperative, obligation, or explicit request DIRECTLY at the contact "
                     "(e.g. 'пришли', 'сделай', 'подготовь', 'нужно тебе', 'не забудь').\n"
-                    "  3. It is NOT the owner describing their own plans or status.\n\n"
+                    "  3. It is NOT the owner describing their own plans, status, or a past conversation.\n\n"
                     "Set has_task=FALSE for:\n"
                     "  - Owner status updates: 'буду на месте в 16:30', 'еду', 'скоро приеду', 'жду тебя'\n"
                     "  - Confirmations and agreements: 'окей', 'договорились', 'хорошо', 'понял', 'до завтра'\n"
                     "  - Greetings, small talk, compliments\n"
                     "  - Sharing information without requiring action: 'встретимся в 10', 'завтра в офисе'\n"
-                    "  - Owner's own commitments: 'я подготовлю', 'пришлю', 'позвоню'\n\n"
+                    "  - Owner's own commitments: 'я подготовлю', 'пришлю', 'позвоню', 'закину', 'скину'\n"
+                    "  - REPORTED/INDIRECT SPEECH: owner describing a conversation or what was said "
+                    "('сказал что', 'написал что', 'говорит что', 'ответил что', 'told them that', 'said that'). "
+                    "Example: 'сказал что закину если кружок запишет' — NOT a task (reported speech + conditional).\n"
+                    "  - CONDITIONAL SITUATIONS describing uncertain future events: 'если X произойдёт', 'if X happens'. "
+                    "A conditional is only a task if it explicitly instructs the contact: 'если сможешь — пришли'.\n"
+                    "  - THIRD-PARTY ACTIONS: owner describing what someone ELSE does or will do "
+                    "('он запишет', 'она придёт', 'они сделают'). The action must be directed AT the contact.\n\n"
                     "If has_task=true, extract: description of what the contact must do, "
                     "deadline in ISO 8601 UTC if explicitly stated. "
                     f"Write description in {lang_name}."
@@ -185,10 +192,15 @@ async def extract_tasks_from_message(text: str, language: str = "ru", tz_name: s
                     f"Respond in {lang_name}.\n"
                     "This message was sent BY the owner TO a contact. "
                     "Extract ALL tasks being delegated — there may be more than one.\n\n"
-                    "A task = a concrete action the CONTACT must perform "
-                    "(imperative or obligation directed at them: 'пришли', 'сделай', 'подготовь').\n"
-                    "NOT tasks: owner status updates ('буду там', 'еду'), "
-                    "confirmations ('окей', 'договорились'), greetings, owner's own commitments ('я позвоню').\n\n"
+                    "A task = a concrete action the CONTACT (not a third party) must perform, "
+                    "expressed with imperative or explicit obligation directed at them: 'пришли', 'сделай', 'подготовь'.\n"
+                    "NOT tasks:\n"
+                    "  - Owner status/plans: 'буду там', 'еду', 'закину', 'пришлю', 'позвоню'\n"
+                    "  - Confirmations: 'окей', 'договорились', 'хорошо'\n"
+                    "  - Reported/indirect speech: 'сказал что ...', 'написал что ...', 'told them that ...' "
+                    "(owner narrating a past conversation — never a delegation)\n"
+                    "  - Conditionals about uncertain events: 'если X то Y' where X is not an explicit requirement\n"
+                    "  - Third-party actions: describing what someone ELSE (not the contact) will do\n\n"
                     "For each task set has_task=true, write a concise description of what the contact must do, "
                     "and set deadline_iso in ISO 8601 UTC if a deadline is explicitly stated. "
                     f"Write all descriptions in {lang_name}. "
@@ -235,11 +247,18 @@ async def parse_dispatch_command(text: str, language: str = "ru", tz_name: str =
                     "  - message_intent: if the owner describes what to convey without giving exact wording. "
                     "Leave null when literal_message is set.\n"
                     "  - scheduled_at_iso: send time in ISO 8601 with timezone offset if specified, else null.\n"
+                    "  - recipient_messages: use ONLY when each recipient gets a DIFFERENT message. "
+                    "List {recipient, message} pairs. Also populate recipients with the same names. "
+                    "Leave literal_message and message_intent null in this case.\n"
                     "  Common Russian patterns — always TYPE A:\n"
-                    "    'Напиши маме привет' → recipient='Мама', literal_message='привет'\n"
-                    "    'Напиши «мама», приеду' → recipient='Мама', message_intent='приеду'\n"
-                    "    'Скажи Диме, что встреча в 6' → recipient='Дима', message_intent='встреча в 6'\n"
-                    "    'Напомни Саше про отчёт' → recipient='Саша', message_intent='про отчёт'\n\n"
+                    "    'Напиши маме привет' → recipients=['Мама'], literal_message='привет'\n"
+                    "    'Напиши «мама», приеду' → recipients=['Мама'], message_intent='приеду'\n"
+                    "    'Скажи Диме, что встреча в 6' → recipients=['Дима'], message_intent='встреча в 6'\n"
+                    "    'Напомни Саше про отчёт' → recipients=['Саша'], message_intent='про отчёт'\n"
+                    "    'Напиши Диме и Саше привет' → recipients=['Дима', 'Саша'], literal_message='привет'\n"
+                    "    'Напиши Владу Ростику привет' → recipients=['Влад', 'Ростик'], literal_message='привет'\n"
+                    "    'Скажи Диме Саше и Вове что встреча в 6' → recipients=['Дима', 'Саша', 'Вова'], message_intent='встреча в 6'\n"
+                    "    'Отправь Вове привет и Максиму пока' → recipients=['Вова', 'Максим'], recipient_messages=[{recipient:'Вова',message:'привет'},{recipient:'Максим',message:'пока'}]\n\n"
                     "TYPE B — REMINDER: the owner wants to be reminded of something at a future time "
                     "(no other recipients, the reminder is for themselves).\n"
                     "  Set is_reminder=true, has_dispatch=false, is_settings=false, recipients=[].\n"
@@ -297,29 +316,14 @@ async def parse_dispatch_command(text: str, language: str = "ru", tz_name: str =
                     "  - email_literal_body: exact body text if owner provided it verbatim. Never rephrase.\n"
                     "  - email_body_intent: what to write if no exact body given. Null if literal_body is set.\n"
                     "  - email_has_attachment: true if owner mentions attaching a file/document/image.\n\n"
-                    "TYPE G — GOOGLE DOCS / SHEETS: the owner mentions a Google Doc, Spreadsheet, or table.\n"
-                    "  Triggers (MUST set is_gdocs=true for any of these):\n"
-                    "    • message contains a docs.google.com URL\n"
-                    "    • owner says anything about a table/spreadsheet/document with words like "
-                    "'таблиц', 'документ', 'таблицу', 'документе', 'spreadsheet', 'doc', 'sheet'\n"
-                    "  Set is_gdocs=true, has_dispatch=false, is_reminder=false, is_email=false.\n"
-                    "  - gdocs_action:\n"
-                    "      'analyze_sheet' — owner wants to READ or ANALYZE a spreadsheet/table "
-                    "(says 'проанализируй', 'покажи', 'прочитай', 'что в таблице', 'сводка', 'analyze', 'read', 'show').\n"
-                    "      'analyze_doc' — owner wants to READ or ANALYZE a text document.\n"
-                    "      'unsupported' — owner wants to CREATE, EDIT, ADD TO, FILL, or MODIFY a doc/sheet "
-                    "(says 'создай', 'создать', 'заполни', 'добавь', 'измени', 'обнови', 'запиши в', 'create', 'edit', 'fill').\n"
-                    "  - gdocs_url: Google Docs or Sheets URL verbatim, if present. Null otherwise.\n"
-                    "  - gdocs_target_name: name of the doc/sheet if mentioned without URL. Null if URL given.\n"
-                    "  - gdocs_content: the user's analysis question. Null for 'unsupported' action.\n\n"
-                    "TYPE H — CONTEXT SEARCH: the owner is asking about what was said or happened in a past conversation.\n"
+                    "TYPE G — CONTEXT SEARCH: the owner is asking about what was said or happened in a past conversation.\n"
                     "  Triggers: question about what a specific person said/replied/wrote, what was discussed, "
                     "what happened, what was agreed on, what someone answered. "
                     "Examples: 'что мне сегодня ответил Ростик', 'что писал Дима вчера', 'о чём говорили с Сашей', "
                     "'что ответил клиент', 'что решили на встрече', 'что согласовали с командой'.\n"
-                    "  Set is_search=true, has_dispatch=false, is_reminder=false, is_gdocs=false, is_email=false.\n\n"
+                    "  Set is_search=true, has_dispatch=false, is_reminder=false, is_email=false.\n\n"
                     "If none of the above apply, set has_dispatch=false, is_reminder=false, is_settings=false, "
-                    "is_ghost=false, is_email=false, is_gdocs=false, is_search=false."
+                    "is_ghost=false, is_email=false, is_search=false."
                 ),
             },
             {"role": "user", "content": text},
@@ -403,7 +407,7 @@ async def generate_nudge_message(
 
 
 @beartype
-async def generate_away_message(language: str = "ru") -> str:
+async def generate_away_message(language: str = "ru", context: str | None = None) -> str:
     """Generate a polite away message for Ghost Mode."""
     from datetime import datetime, timezone
     lang_name = _LANG_NAMES.get(language, "Russian")
@@ -413,6 +417,7 @@ async def generate_away_message(language: str = "ru") -> str:
         else "afternoon" if 12 <= hour < 18
         else "evening"
     )
+    context_line = f" The user's situation: {context}." if context else ""
     client = _get_client()
     completion = await client.chat.completions.create(
         model=GPT_MODEL,
@@ -421,7 +426,7 @@ async def generate_away_message(language: str = "ru") -> str:
                 "role": "system",
                 "content": (
                     f"Write a short, polite away message in {lang_name} for a busy entrepreneur. "
-                    f"It is currently {time_hint}. "
+                    f"It is currently {time_hint}.{context_line} "
                     "The message should: say they are currently unavailable, "
                     "invite the sender to briefly describe their request, "
                     "and note that they will respond as soon as possible. "
@@ -529,10 +534,22 @@ class _ClassifiedInquiry(BaseModel):
 
 
 @beartype
-async def classify_inquiry(text: str, language: str = "ru") -> tuple[InquiryCategory, str, bool]:
+async def classify_inquiry(
+    text: str,
+    language: str = "ru",
+    is_known_contact: bool = False,
+    labels: list[str] | None = None,
+) -> tuple[InquiryCategory, str, bool]:
     """Returns (category, one-line summary, has_question) for a ghost-mode inquiry message."""
     lang_name = _LANG_NAMES.get(language, "Russian")
     client = _get_client()
+
+    context_hint = ""
+    if is_known_contact:
+        context_hint += "\nIMPORTANT: This sender is a known contact who has communicated with you before — never classify them as Spam."
+    if labels:
+        context_hint += f"\nThis contact has these labels assigned by the user: {', '.join(labels)}. Use them as a classification hint."
+
     completion = await client.beta.chat.completions.parse(
         model=GPT_MODEL,
         messages=[
@@ -542,16 +559,18 @@ async def classify_inquiry(text: str, language: str = "ru") -> tuple[InquiryCate
                     f"Respond in {lang_name}.\n"
                     "Classify the following message from a contact.\n\n"
                     "Categories:\n"
-                    "  Urgent — time-sensitive issue requiring immediate action\n"
-                    "  Sales — sales pitch, partnership proposal, or advertising\n"
-                    "  Team — message from a team member or employee\n"
-                    "  Spam — irrelevant, automated, or greeting-only message\n\n"
+                    "  Urgent — time-sensitive issue requiring the owner's immediate attention\n"
+                    "  Sales — human-written commercial proposal, partnership offer, or advertising pitch\n"
+                    "  Team — colleague, employee, or acquaintance sending a question, update, or greeting\n"
+                    "  Spam — clearly automated or bot-generated bulk message; "
+                    "a real person writing a commercial offer is Sales, not Spam\n"
+                    + context_hint + "\n\n"
                     "Return:\n"
                     "  category: one of Urgent, Sales, Team, Spam\n"
                     f"  summary: one concise sentence in {lang_name} describing what they want "
                     "(use 'просто поздоровался' / 'just said hello' if it's only a greeting)\n"
                     "  has_question: true if the message contains an actual request, question, or "
-                    "substantive content (not just a greeting or short phrase)"
+                    "substantive content (false for greetings or short phrases only)"
                 ),
             },
             {"role": "user", "content": text},
@@ -681,17 +700,19 @@ async def answer_from_context(
             {
                 "role": "system",
                 "content": (
-                    f"Respond in {lang_name}. Use Telegram HTML formatting: "
-                    "<b>bold</b> for names and key facts, plain text otherwise. "
-                    "No markdown asterisks.\n"
+                    f"Respond in {lang_name}. Use Telegram HTML formatting only: "
+                    "<b>bold</b>, <i>italic</i>. No markdown asterisks or other tags.\n"
                     "You are a personal assistant answering questions about past conversations. "
                     "The context below contains relevant messages from the owner's chat history "
                     "with timestamps already converted to the owner's local timezone.\n"
-                    "Rules:\n"
-                    "- Always cite the date and time (from the timestamp in brackets) for each fact you state.\n"
-                    "- Use bullet points when citing 2+ separate facts.\n"
-                    "- If the answer isn't clearly present in the context, say so briefly.\n"
-                    "- Keep the total response under 5 sentences or 5 bullets."
+                    "Format rules (strictly follow):\n"
+                    "- Always structure the answer as a bullet list, one bullet per topic or separate fact.\n"
+                    "- Each bullet: <b>Topic/Subject</b> — brief summary. <i>(HH:MM)</i> or <i>(HH:MM–HH:MM)</i> at the end.\n"
+                    "  Example: • <b>Фильм</b> — договорились сходить в кино в пятницу. <i>(14:30)</i>\n"
+                    "- Use a compact time range if the topic spans multiple messages (first–last timestamp).\n"
+                    "- If only one fact exists, a single bullet is fine — no need for multiple.\n"
+                    "- If the answer isn't clearly present in the context, say so in one sentence.\n"
+                    "- Maximum 6 bullets total."
                 ),
             },
             {
@@ -733,3 +754,29 @@ async def analyze_document(content: str, question: str, doc_type: str = "spreads
         max_completion_tokens=700,
     )
     return (completion.choices[0].message.content or "Не удалось проанализировать.").strip()
+
+
+@beartype
+async def merge_inquiry_summaries(summaries: list[str], language: str = "ru") -> str:
+    """Combine multiple per-message summaries from the same sender into one sentence."""
+    if len(summaries) <= 1:
+        return summaries[0] if summaries else "—"
+    lang_name = _LANG_NAMES.get(language, "Russian")
+    combined = "\n".join(f"- {s}" for s in summaries)
+    client = _get_client()
+    completion = await client.chat.completions.create(
+        model=GPT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    f"Respond in {lang_name}. "
+                    "Combine these summaries from messages sent by the same person into one concise sentence "
+                    f"capturing all key points. No intro phrases. Max 20 words in {lang_name}."
+                ),
+            },
+            {"role": "user", "content": combined},
+        ],
+        max_completion_tokens=60,
+    )
+    return (completion.choices[0].message.content or summaries[-1]).strip()

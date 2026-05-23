@@ -27,6 +27,9 @@ export function useGhost() {
     away_message: null,
     activated_at: null,
     silent_mode: false,
+    auto_off_at: null,
+    excluded_contact_ids: [],
+    excluded_labels: [],
   };
 
   const toggle = async (active: boolean, awayMessage?: string | null) => {
@@ -35,6 +38,9 @@ export function useGhost() {
       away_message: awayMessage ?? status?.away_message ?? null,
       activated_at: active ? new Date().toISOString() : null,
       silent_mode: status?.silent_mode ?? false,
+      auto_off_at: status?.auto_off_at ?? null,
+      excluded_contact_ids: status?.excluded_contact_ids ?? [],
+      excluded_labels: status?.excluded_labels ?? [],
     };
     await mutateStatus(
       async () => {
@@ -74,6 +80,16 @@ export function useGhost() {
     return res.text;
   };
 
+  const setExclusions = async (contact_ids: number[], labels: string[]) => {
+    const updated = await api.ghost.setExclusions(contact_ids, labels);
+    await mutateStatus(updated, false);
+  };
+
+  const setAutoOff = async (auto_off_at: string | null) => {
+    const updated = await api.ghost.setAutoOff(auto_off_at);
+    await mutateStatus(updated, false);
+  };
+
   return {
     status: status ?? defaultStatus,
     inquiries: inquiries ?? [],
@@ -83,5 +99,7 @@ export function useGhost() {
     saveAwayMessage,
     setSilentMode,
     generateReply,
+    setExclusions,
+    setAutoOff,
   };
 }

@@ -1,14 +1,22 @@
 "use client";
 
+import type { Lang } from "@/lib/i18n";
+
 interface LanguageSelectProps {
-  value: "ru" | "en";
-  onChange: (lang: "ru" | "en") => void;
+  value: Lang;
+  onChange: (lang: Lang) => void;
 }
+
+const LANG_LABELS: Record<Lang, string> = {
+  ru: "RU",
+  en: "EN",
+  ua: "UA",
+};
 
 export function LanguageSelect({ value, onChange }: LanguageSelectProps) {
   return (
     <div className="flex rounded-xl overflow-hidden border border-tg-hint/20">
-      {(["ru", "en"] as const).map((lang) => (
+      {(["ru", "ua", "en"] as const).map((lang) => (
         <button
           key={lang}
           onClick={() => onChange(lang)}
@@ -18,7 +26,7 @@ export function LanguageSelect({ value, onChange }: LanguageSelectProps) {
               : "text-tg-hint bg-transparent"
           }`}
         >
-          {lang.toUpperCase()}
+          {LANG_LABELS[lang]}
         </button>
       ))}
     </div>

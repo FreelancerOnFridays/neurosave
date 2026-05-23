@@ -1,9 +1,9 @@
-export type Lang = "ru" | "en";
+export type Lang = "ru" | "en" | "ua";
 
 const ru = {
   nav_today: "Сегодня",
   nav_tasks: "Задачи",
-  nav_ghost: "Занят",
+  nav_ghost: "Ghost Mode",
   nav_settings: "Настройки",
 
   today_summary_personal: "Мои задачи",
@@ -40,6 +40,11 @@ const ru = {
   ghost_generating: "Генерирую…",
   ghost_silent_label: "Не отправлять автоответ",
   ghost_silent_tooltip: "Бот не будет отправлять автоответ, но продолжит собирать и классифицировать сообщения для дайджеста.",
+  ghost_auto_off_label: "Авто-выключение",
+  ghost_auto_off_not_set: "Не задано",
+  ghost_auto_off_clear: "Убрать",
+  ghost_ai_dialog_label: "Разрешить ассистенту вести диалог",
+  ghost_ai_dialog_tooltip: "Пока вас нет на месте бот сможет отвечать на входящие сообщения вместо вас, анализируя предварительно общий контекст диалога.",
   ghost_inquiries_section: "Запросы",
 
   settings_language: "Язык",
@@ -70,6 +75,7 @@ const ru = {
   cat_team: "👥 Команда",
   cat_sales: "💼 Продажи",
   cat_spam: "🚫 Спам",
+  cat_normal: "💬 Не срочно",
 
   sec_overdue: "🔴 Просрочено",
   sec_today: "📅 Сегодня",
@@ -83,7 +89,7 @@ const ru = {
   unknown_contact: "Неизвестный",
   profile_link: "👤 Профиль",
 
-  settings_contacts_title: "Контакты и синхронизация",
+  settings_contacts_title: "Контакты и метки",
   contacts_sync_now: "Синхронизировать",
   contacts_syncing: "Синхронизация…",
   contacts_last_sync: "Последняя синхронизация",
@@ -111,11 +117,6 @@ const ru = {
   nav_integrations: "Сервисы",
   integrations_empty: "Нет подключённых сервисов",
   integrations_connect_hint: "Подключите сервисы в настройках",
-  gdocs_new_doc: "Новый документ",
-  gdocs_new_sheet: "Новая таблица",
-  gdocs_recent: "Последние файлы",
-  gdocs_name_placeholder: "Название",
-  gdocs_create: "Создать",
   calendar_upcoming: "Ближайшие события",
   calendar_no_events: "Нет событий на следующие 7 дней",
 
@@ -137,6 +138,7 @@ const ru = {
   gmail_notifications_hint: "Бот будет присылать уведомления когда вам ответят на письмо",
 
   contacts_all: "Все контакты",
+  contacts_no_contacts_hint: "Контакты появятся автоматически из переписки в бизнес-чатах",
   contacts_bot_name: "Имя для бота",
   contacts_bot_name_hint: "Как называть этого человека в командах",
   contacts_email: "Email",
@@ -147,12 +149,31 @@ const ru = {
   labels_add: "Добавить метку",
   labels_empty: "Нет меток",
   labels_filter: "Все метки",
+
+  ghost_exclusions_title: "Исключения автоответа",
+  ghost_exclusions_hint: "Этим контактам автоответ отправляться не будет",
+  ghost_exclusions_by_label: "По меткам",
+  ghost_exclusions_by_contact: "По контактам",
+  ghost_exclusions_empty_labels: "Нет меток",
+  ghost_exclusions_empty_contacts: "Нет контактов",
+  ghost_exclusions_search: "Поиск контакта…",
+
+  settings_send_tutorial: "Инструкция к боту",
+  settings_send_tutorial_hint: "Отправить в чат пошаговый гайд",
+  settings_tutorial_sending: "Отправляю…",
+  settings_tutorial_sent: "Отправлено ✅",
+
+  settings_contact_support: "Связаться с поддержкой",
+  settings_contact_support_hint: "Нашли баг, хотите предложить улучшение или задать вопрос? Напишите нам",
+  settings_contact_support_btn: "Написать",
+
+  calendar_coming_soon: "Скоро",
 } as const;
 
 const en: Record<keyof typeof ru, string> = {
   nav_today: "Today",
   nav_tasks: "Tasks",
-  nav_ghost: "Busy",
+  nav_ghost: "Ghost Mode",
   nav_settings: "Settings",
 
   today_summary_personal: "My tasks",
@@ -189,6 +210,11 @@ const en: Record<keyof typeof ru, string> = {
   ghost_generating: "Generating…",
   ghost_silent_label: "Don't send auto-reply",
   ghost_silent_tooltip: "The assistant won't send the auto-reply message but will still collect and categorize messages for the digest.",
+  ghost_auto_off_label: "Auto-off",
+  ghost_auto_off_not_set: "Not set",
+  ghost_auto_off_clear: "Clear",
+  ghost_ai_dialog_label: "Allow assistant to conduct dialogue",
+  ghost_ai_dialog_tooltip: "While you're away, the bot can reply to incoming messages on your behalf, analyzing the overall conversation context.",
   ghost_inquiries_section: "Inquiries",
 
   settings_language: "Language",
@@ -219,6 +245,7 @@ const en: Record<keyof typeof ru, string> = {
   cat_team: "👥 Team",
   cat_sales: "💼 Sales",
   cat_spam: "🚫 Spam",
+  cat_normal: "💬 Not urgent",
 
   sec_overdue: "🔴 Overdue",
   sec_today: "📅 Today",
@@ -232,7 +259,7 @@ const en: Record<keyof typeof ru, string> = {
   unknown_contact: "Unknown",
   profile_link: "👤 Profile",
 
-  settings_contacts_title: "Contacts & sync",
+  settings_contacts_title: "Contacts & labels",
   contacts_sync_now: "Sync now",
   contacts_syncing: "Syncing…",
   contacts_last_sync: "Last sync",
@@ -260,11 +287,6 @@ const en: Record<keyof typeof ru, string> = {
   nav_integrations: "Services",
   integrations_empty: "No connected services",
   integrations_connect_hint: "Connect services in Settings",
-  gdocs_new_doc: "New document",
-  gdocs_new_sheet: "New spreadsheet",
-  gdocs_recent: "Recent files",
-  gdocs_name_placeholder: "Name",
-  gdocs_create: "Create",
   calendar_upcoming: "Upcoming events",
   calendar_no_events: "No events in the next 7 days",
 
@@ -286,6 +308,7 @@ const en: Record<keyof typeof ru, string> = {
   gmail_notifications_hint: "Bot will notify you when someone replies to your email",
 
   contacts_all: "All contacts",
+  contacts_no_contacts_hint: "Contacts will appear automatically from business chat conversations",
   contacts_bot_name: "Bot name",
   contacts_bot_name_hint: "How to refer to this person in commands",
   contacts_email: "Email",
@@ -296,9 +319,198 @@ const en: Record<keyof typeof ru, string> = {
   labels_add: "Add label",
   labels_empty: "No labels",
   labels_filter: "All labels",
+
+  ghost_exclusions_title: "Auto-reply exclusions",
+  ghost_exclusions_hint: "These contacts won't receive the auto-reply",
+  ghost_exclusions_by_label: "By label",
+  ghost_exclusions_by_contact: "By contact",
+  ghost_exclusions_empty_labels: "No labels",
+  ghost_exclusions_empty_contacts: "No contacts",
+  ghost_exclusions_search: "Search contact…",
+
+  settings_send_tutorial: "Bot guide",
+  settings_send_tutorial_hint: "Send step-by-step guide to chat",
+  settings_tutorial_sending: "Sending…",
+  settings_tutorial_sent: "Sent ✅",
+
+  settings_contact_support: "Contact Support",
+  settings_contact_support_hint: "Found a bug, have a suggestion or a question? Write to us",
+  settings_contact_support_btn: "Write",
+
+  calendar_coming_soon: "Coming soon",
 };
 
-const strings = { ru, en } as const;
+const ua: Record<keyof typeof ru, string> = {
+  nav_today: "Сьогодні",
+  nav_tasks: "Завдання",
+  nav_ghost: "Ghost Mode",
+  nav_settings: "Налаштування",
+
+  today_summary_personal: "Мої завдання",
+  today_summary_delegated: "Делеговано",
+  today_summary_overdue: "Прострочено",
+  today_summary_reminders: "Нагадування",
+  today_my_section: "Мої завдання на сьогодні",
+  today_delegated_section: "Делеговано сьогодні",
+  today_quick_capture_placeholder: "Додати завдання або нагадування…",
+  today_progress_label: "виконано",
+  today_priority_section: "Головне",
+  today_timeline_section: "Розклад",
+  today_anytime_group: "Без часу",
+  today_calendar_event: "Зустріч",
+  today_all_done: "Все виконано 🎉",
+
+  tasks_my_tasks: "Мої завдання",
+  tasks_delegated_tasks: "Делеговано",
+  tasks_filter_date: "Дата",
+  tasks_filter_reminders: "Тільки з нагадуваннями",
+  tasks_subtitle: "Всі завдання",
+
+  swipe_delete: "Видалити",
+  swipe_add_reminder: "Нагадати",
+  swipe_edit_reminder: "Змінити",
+  swipe_remind: "Нагадати",
+
+  ghost_title: "Режим зайнятості",
+  ghost_active: "Активний",
+  ghost_inactive: "Вимкнено",
+  ghost_since: "Активний з",
+  ghost_away_label: "Автовідповідь",
+  ghost_generate_btn: "✨ Згенерувати",
+  ghost_generating: "Генерую…",
+  ghost_silent_label: "Не надсилати автовідповідь",
+  ghost_silent_tooltip: "Бот не надсилатиме автовідповідь, але продовжить збирати та класифікувати повідомлення для дайджесту.",
+  ghost_auto_off_label: "Авто-вимкнення",
+  ghost_auto_off_not_set: "Не задано",
+  ghost_auto_off_clear: "Прибрати",
+  ghost_ai_dialog_label: "Дозволити асистенту вести діалог",
+  ghost_ai_dialog_tooltip: "Поки вас немає на місці, бот зможе відповідати на вхідні повідомлення замість вас, аналізуючи загальний контекст діалогу.",
+  ghost_inquiries_section: "Запити",
+
+  settings_language: "Мова",
+  settings_timezone: "Часовий пояс",
+  settings_brief_time: "Час брифінгу",
+  settings_brief_toggle: "Ранковий брифінг",
+  settings_brief_hint: "ГГ:ХХ",
+  settings_theme: "Тема",
+  theme_auto: "Авто",
+  theme_light: "Світла",
+  theme_dark: "Темна",
+
+  reminder_add_title: "Додати нагадування",
+  reminder_edit_title: "Змінити нагадування",
+  reminder_confirm: "Готово",
+  reminder_cancel: "Скасувати",
+
+  task_done: "✅ Готово",
+  task_nudge: "💬 Нагадати",
+  task_cancel: "✕ Скасувати",
+  task_profile: "👤 Профіль",
+
+  status_open: "Відкрито",
+  status_done: "Готово",
+  status_cancelled: "Скасовано",
+
+  cat_urgent: "🔴 Терміново",
+  cat_team: "👥 Команда",
+  cat_sales: "💼 Продажі",
+  cat_spam: "🚫 Спам",
+  cat_normal: "💬 Не терміново",
+
+  sec_overdue: "🔴 Прострочено",
+  sec_today: "📅 Сьогодні",
+  sec_upcoming: "⏳ Майбутні",
+  sec_done: "✓ Завершено",
+
+  empty_tasks: "Немає завдань",
+  empty_inquiries: "Немає запитів у цій сесії",
+
+  error_loading: "Помилка завантаження",
+  unknown_contact: "Невідомий",
+  profile_link: "👤 Профіль",
+
+  settings_contacts_title: "Контакти та мітки",
+  contacts_sync_now: "Синхронізувати",
+  contacts_syncing: "Синхронізація…",
+  contacts_last_sync: "Остання синхронізація",
+  contacts_never_synced: "Ще не синхронізовано",
+  contacts_count: "контактів",
+  contacts_not_configured: "Додайте TELEGRAM_API_ID та TELEGRAM_API_HASH у .env",
+  contacts_not_authorized: "Надішліть /sync_contacts боту для авторизації",
+  contacts_folders_title: "Папки чатів",
+  contacts_folder_sync: "Синк",
+  contacts_no_folders: "Папки не знайдено",
+
+  sync_not_auth_hint: "Підключіть ваш акаунт Telegram для синхронізації контактів",
+  sync_connect_btn: "Підключити акаунт",
+  sync_connected_label: "Telegram підключено",
+  sync_disconnect_btn: "Відключити",
+  sync_submitting: "Зачекайте…",
+  sync_continue_btn: "Продовжити",
+  sync_cancel_btn: "Скасувати",
+  sync_phone_placeholder: "+380991234567",
+  sync_code_placeholder: "12345",
+  sync_password_placeholder: "Хмарний пароль",
+
+  settings_integrations_title: "Інтеграції",
+
+  nav_integrations: "Сервіси",
+  integrations_empty: "Немає підключених сервісів",
+  integrations_connect_hint: "Підключіть сервіси у налаштуваннях",
+  calendar_upcoming: "Найближчі події",
+  calendar_no_events: "Немає подій на наступні 7 днів",
+
+  gmail_recent_threads: "Останні листи",
+  gmail_inbox_reply: "Вхідна відповідь",
+  gmail_compose: "Написати лист",
+  gmail_no_threads: "Немає листів",
+  gmail_compose_to: "Кому (email)",
+  gmail_compose_subject: "Тема",
+  gmail_compose_body: "Текст листа",
+  gmail_compose_send: "Надіслати",
+  gmail_compose_cancel: "Скасувати",
+  gmail_reply: "Відповісти",
+  gmail_sending: "Надсилаю…",
+  gmail_sent: "Надіслано ✅",
+  gmail_attachments: "Вкладення",
+  gmail_redirect_hint: "Для підключення Google додайте ці URI в Google Cloud Console:",
+  gmail_notifications_toggle: "Сповіщення про вхідні листи",
+  gmail_notifications_hint: "Бот надсилатиме сповіщення, коли вам відповідять на лист",
+
+  contacts_all: "Всі контакти",
+  contacts_no_contacts_hint: "Контакти з'являться автоматично з переписки у бізнес-чатах",
+  contacts_bot_name: "Ім'я для бота",
+  contacts_bot_name_hint: "Як називати цю людину в командах",
+  contacts_email: "Email",
+  contacts_save: "Зберегти",
+  contacts_search: "Пошук за іменем",
+  contacts_no_email: "Немає email",
+  labels_section: "Мітки",
+  labels_add: "Додати мітку",
+  labels_empty: "Немає міток",
+  labels_filter: "Всі мітки",
+
+  ghost_exclusions_title: "Виключення автовідповіді",
+  ghost_exclusions_hint: "Цим контактам автовідповідь не надсилатиметься",
+  ghost_exclusions_by_label: "За мітками",
+  ghost_exclusions_by_contact: "За контактами",
+  ghost_exclusions_empty_labels: "Немає міток",
+  ghost_exclusions_empty_contacts: "Немає контактів",
+  ghost_exclusions_search: "Пошук контакту…",
+
+  settings_send_tutorial: "Інструкція до бота",
+  settings_send_tutorial_hint: "Надіслати в чат покроковий гайд",
+  settings_tutorial_sending: "Надсилаю…",
+  settings_tutorial_sent: "Надіслано ✅",
+
+  settings_contact_support: "Зв'язатися з підтримкою",
+  settings_contact_support_hint: "Знайшли баг, хочете запропонувати покращення або поставити запитання? Напишіть нам",
+  settings_contact_support_btn: "Написати",
+
+  calendar_coming_soon: "Скоро",
+};
+
+const strings = { ru, en, ua } as const;
 
 export type TKey = keyof typeof ru;
 

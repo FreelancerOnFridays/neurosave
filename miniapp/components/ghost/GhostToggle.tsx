@@ -13,10 +13,16 @@ interface GhostToggleProps {
 function formatSince(iso: string | null): string {
   if (!iso) return "";
   try {
-    return new Date(iso).toLocaleTimeString("ru-RU", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    const d = new Date(iso);
+    const now = new Date();
+    const sameDay =
+      d.getDate() === now.getDate() &&
+      d.getMonth() === now.getMonth() &&
+      d.getFullYear() === now.getFullYear();
+    const time = d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+    if (sameDay) return time;
+    const date = d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+    return `${date}, ${time}`;
   } catch {
     return "";
   }

@@ -41,14 +41,6 @@ GMAIL_SCOPES = [
     "email",
 ]
 
-GDOCS_SCOPES = [
-    "https://www.googleapis.com/auth/documents",
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive.file",
-    "openid",
-    "email",
-]
-
 
 class IntegrationStatus(BaseModel):
     provider: str
@@ -60,7 +52,6 @@ class IntegrationStatus(BaseModel):
 class IntegrationsStatusOut(BaseModel):
     google_calendar: IntegrationStatus
     gmail: IntegrationStatus
-    google_docs: IntegrationStatus
 
 
 class AuthUrlOut(BaseModel):
@@ -132,17 +123,9 @@ async def integrations_status(
         email=gmail_row.email if gmail_row else None,
         scopes=(gmail_row.scopes or "").split() if gmail_row else [],
     )
-    gdocs_row = await oauth_repo.get_token(session, owner_id, "google_docs")
-    gdocs_status = IntegrationStatus(
-        provider="google_docs",
-        connected=gdocs_row is not None,
-        email=gdocs_row.email if gdocs_row else None,
-        scopes=(gdocs_row.scopes or "").split() if gdocs_row else [],
-    )
     return IntegrationsStatusOut(
         google_calendar=google_status,
         gmail=gmail_status,
-        google_docs=gdocs_status,
     )
 
 
@@ -497,148 +480,6 @@ _GDOCS_SUCCESS_HTML = """<!DOCTYPE html>
 </html>"""
 
 
-@router.get("/google-docs/auth-url", response_model=AuthUrlOut)
-async def gdocs_auth_url(
-    owner_id: int = Depends(get_owner_id),
-) -> AuthUrlOut:
-    if not settings.google_client_id or not settings.google_client_secret:
-        raise HTTPException(status_code=503, detail="Google OAuth not configured")
-
-    redirect_uri = f"{settings.api_base_url}/api/integrations/google-docs/callback"
-    flow = _make_google_flow(redirect_uri, GDOCS_SCOPES)
-    state, _verifier, challenge = _make_state_pkce(owner_id)
-    auth_url, _ = flow.authorization_url(
-        access_type="offline",
-        prompt="consent",
-        state=state,
-        code_challenge=challenge,
-        code_challenge_method="S256",
-    )
-    return AuthUrlOut(url=auth_url)
-
-
-@router.get("/google-docs/callback", response_class=HTMLResponse)
-async def gdocs_callback(
-    code: str | None = Query(default=None),
-    state: str | None = Query(default=None),
-    error: str | None = Query(default=None),
-    session: AsyncSession = Depends(get_db),
-) -> HTMLResponse:
-    if error:
-        return HTMLResponse(_ERROR_HTML.format(error=error), status_code=400)
-    if not code or not state:
-        return HTMLResponse(_ERROR_HTML.format(error="Отсутствуют параметры code/state"), status_code=400)
-
-    owner_id, code_verifier = _consume_state(state)
-    if owner_id is None:
-        return HTMLResponse(_ERROR_HTML.format(error="Неверный или истёкший state-параметр"), status_code=400)
-
-    try:
-        from db.repositories import oauth as oauth_repo
-
-        redirect_uri = f"{settings.api_base_url}/api/integrations/google-docs/callback"
-        flow = _make_google_flow(redirect_uri, GDOCS_SCOPES)
-        flow.fetch_token(code=code, code_verifier=code_verifier)
-        creds = flow.credentials
-
-        user_email: str | None = None
-        try:
-            from googleapiclient.discovery import build
-            oauth2_service = build("oauth2", "v2", credentials=creds, cache_discovery=False)
-            user_info: dict[str, Any] = oauth2_service.userinfo().get().execute()
-            user_email = user_info.get("email")
-        except Exception:
-            pass
-
-        from datetime import timezone as tz
-        token_expiry = creds.expiry.replace(tzinfo=tz.utc) if creds.expiry else None
-
-        await oauth_repo.upsert_token(
-            session,
-            owner_id,
-            "google_docs",
-            access_token=creds.token or "",
-            refresh_token=creds.refresh_token,
-            token_expiry=token_expiry,
-            scopes=" ".join(creds.scopes or []),
-            email=user_email,
-        )
-        await session.commit()
-        return HTMLResponse(_GDOCS_SUCCESS_HTML, status_code=200)
-
-    except Exception as e:
-        logger.exception("Google Docs OAuth callback error for owner %d: %s", owner_id, e)
-        return HTMLResponse(_ERROR_HTML.format(error=str(e)), status_code=500)
-
-
-@router.delete("/google-docs", status_code=204)
-async def gdocs_disconnect(
-    owner_id: int = Depends(get_owner_id),
-    session: AsyncSession = Depends(get_db),
-) -> None:
-    from db.repositories import oauth as oauth_repo
-    await oauth_repo.delete_token(session, owner_id, "google_docs")
-    await session.commit()
-
-
-class DriveFileOut(BaseModel):
-    id: str
-    name: str
-    url: str
-    type: str
-    modified_time: str
-
-
-@router.get("/google-docs/files", response_model=list[DriveFileOut])
-async def gdocs_files(
-    owner_id: int = Depends(get_owner_id),
-    session: AsyncSession = Depends(get_db),
-) -> list[DriveFileOut]:
-    from services import google_docs as docs_svc
-    from db.repositories import integration_configs as cfg_repo
-
-    creds = await docs_svc.get_gdocs_credentials(owner_id, session)
-    if not creds:
-        raise HTTPException(status_code=400, detail="Google Docs not connected")
-
-    folder_id = await cfg_repo.get_config(session, owner_id, docs_svc.GDOCS_DRIVE_FOLDER_KEY)
-    if not folder_id:
-        return []
-
-    files = await docs_svc.list_drive_files(creds, folder_id)
-    return [DriveFileOut(**f) for f in files]
-
-
-class CreateDocIn(BaseModel):
-    name: str
-    type: str = "doc"
-
-
-@router.post("/google-docs/create", response_model=dict)
-async def gdocs_create(
-    body: CreateDocIn,
-    owner_id: int = Depends(get_owner_id),
-    session: AsyncSession = Depends(get_db),
-) -> dict[str, str]:
-    from services import google_docs as docs_svc, google_sheets as sheets_svc
-
-    creds = await docs_svc.get_gdocs_credentials(owner_id, session)
-    if not creds:
-        raise HTTPException(status_code=400, detail="Google Docs not connected")
-
-    if body.type == "sheet":
-        folder_id = await docs_svc.ensure_drive_folder(creds, owner_id, session)
-        file_id, url = await sheets_svc.create_spreadsheet(creds, folder_id, body.name)
-        from db.repositories import integration_configs as cfg_repo
-        from services.google_sheets import _sheet_slug
-        await cfg_repo.set_config(session, owner_id, f"gdocs_sheet:{_sheet_slug(body.name)}", file_id)
-    else:
-        file_id, url = await docs_svc.find_or_create_doc(creds, owner_id, body.name, "", session)
-
-    await session.commit()
-    return {"id": file_id, "url": url}
-
-
 # ── Google Calendar events ────────────────────────────────────────────────────
 
 class CalendarEventOut(BaseModel):
@@ -833,6 +674,5 @@ async def redirect_uris() -> dict[str, str | list[str]]:
     uris = [
         f"{base}/api/integrations/google/callback",
         f"{base}/api/integrations/gmail/callback",
-        f"{base}/api/integrations/google-docs/callback",
     ]
     return {"base_url": base, "redirect_uris": uris}

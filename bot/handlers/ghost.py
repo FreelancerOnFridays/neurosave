@@ -24,6 +24,10 @@ DEFAULT_AWAY_EN = (
     "Busy right now, will get back to you later. "
     "If it's urgent, briefly describe your question and I'll reach out when free."
 )
+DEFAULT_AWAY_UA = (
+    "Зараз зайнятий, відповім пізніше. "
+    "Якщо терміново — коротко опишіть питання, і я зв'яжусь як звільнюся."
+)
 
 _CATEGORY_LABELS: dict[InquiryCategory, str] = {
     InquiryCategory.urgent: "🔴 Срочно",

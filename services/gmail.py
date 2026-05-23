@@ -14,6 +14,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
+# Matches Gmail/Outlook attribution line, e.g.:
+# "On Sat, 23 May 2026 at 13:13, Name <email> wrote:"
+# Can appear mid-line when plain-text has no preceding newline.
+_ATTRIBUTION_RE = re.compile(
+    r'\bOn\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\w*,?\s+\d',
+    re.IGNORECASE,
+)
+
+
+def strip_quoted_reply(text: str) -> str:
+    """Return only the new reply text, stripping the quoted original message."""
+    m = _ATTRIBUTION_RE.search(text)
+    if m:
+        text = text[:m.start()].strip()
+    # Drop any remaining "> " quoted lines (Thunderbird / Apple Mail style)
+    lines = [l for l in text.splitlines() if not l.lstrip().startswith(">")]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
 # Patterns that indicate automated/non-human senders
 _AUTOMATED_PATTERNS = [
     "no-reply", "noreply", "do-not-reply", "donotreply",
@@ -65,8 +86,6 @@ def _collect_attachments(payload: dict[str, Any], result: list[dict[str, str]]) 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.readonly",
-    "openid",
-    "email",
 ]
 
 
@@ -261,17 +280,16 @@ _SKIP_LABELS = {"CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_UPDATES", "S
 
 @beartype
 async def get_history_since(service: Any, start_history_id: str) -> list[dict[str, Any]]:
-    """Return new human inbox messages since the given Gmail historyId."""
-    try:
-        resp: dict[str, Any] = service.users().history().list(
-            userId="me",
-            startHistoryId=start_history_id,
-            historyTypes=["messageAdded"],
-            labelId="INBOX",
-        ).execute()
-    except Exception as exc:
-        logger.warning("Gmail get_history_since failed: %s", exc)
-        return []
+    """Return new human inbox messages since the given Gmail historyId.
+
+    Raises on API error so the caller can re-initialize the historyId.
+    """
+    resp: dict[str, Any] = service.users().history().list(
+        userId="me",
+        startHistoryId=start_history_id,
+        historyTypes=["messageAdded"],
+        labelId="INBOX",
+    ).execute()
 
     messages: list[dict[str, Any]] = []
     for record in resp.get("history", []):

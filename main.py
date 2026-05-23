@@ -15,8 +15,9 @@ from aiogram.enums import ParseMode
 from api.app import create_app
 from bot.handlers import business_messages, callbacks, commands, direct_messages, ghost
 from bot.middlewares.db_session import DbSessionMiddleware
+from bot.middlewares.privacy_gate import PrivacyGateMiddleware
 from config import settings
-from workers import contact_sync_worker, deadline_reminder, gmail_reply_worker, morning_brief, reminder_worker
+from workers import deadline_reminder, gmail_reply_worker, morning_brief, reminder_worker
 from workers.broker import broker
 
 logging.basicConfig(level=logging.INFO)
@@ -38,6 +39,8 @@ async def main() -> None:
 
     dp = Dispatcher()
     dp.update.middleware(DbSessionMiddleware())
+    dp.message.middleware(PrivacyGateMiddleware())
+    dp.callback_query.middleware(PrivacyGateMiddleware())
     dp.include_router(commands.router)
     dp.include_router(ghost.router)
     dp.include_router(business_messages.router)
@@ -65,7 +68,6 @@ async def main() -> None:
         morning_brief.run_loop(bot),
         reminder_worker.run_loop(bot),
         gmail_reply_worker.run_loop(bot),
-        contact_sync_worker.run_loop(),
         server.serve(),
     )
 

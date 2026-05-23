@@ -31,15 +31,22 @@ export function IntegrationsSection() {
   return (
     <Card className="mt-4">
       <p className="text-sm font-semibold text-tg-text mb-3">🔗 {t("settings_integrations_title")}</p>
-      <IntegrationCard
-        integration={data.google_calendar}
-        label="Google Calendar"
-        icon="📅"
-        description="Синхронизация дедлайнов задач с Google Calendar"
-        onAuthUrl={api.integrations.googleAuthUrl}
-        onDisconnect={api.integrations.googleDisconnect}
-        onRefresh={() => mutate()}
-      />
+
+      {/* Google Calendar — coming soon */}
+      <div className="flex items-center gap-3 py-2 opacity-50">
+        <span className="text-2xl">📅</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-tg-text">Google Calendar</p>
+          <p className="text-xs text-tg-hint mt-0.5">Синхронизация дедлайнов задач с Google Calendar</p>
+        </div>
+        <span
+          className="shrink-0 text-xs font-medium px-2 py-0.5 rounded-full"
+          style={{ background: "var(--tg-theme-secondary-bg-color)", color: "var(--tg-theme-hint-color)" }}
+        >
+          {t("calendar_coming_soon")}
+        </span>
+      </div>
+
       <div className="mt-3">
         <IntegrationCard
           integration={data.gmail}
@@ -89,17 +96,6 @@ export function IntegrationsSection() {
             </button>
           </div>
         )}
-      </div>
-      <div className="mt-3">
-        <IntegrationCard
-          integration={data.google_docs}
-          label="Google Docs & Sheets"
-          icon="📄"
-          description="Создание документов и таблиц прямо из чата с ботом"
-          onAuthUrl={api.integrations.googleDocsAuthUrl}
-          onDisconnect={api.integrations.googleDocsDisconnect}
-          onRefresh={() => mutate()}
-        />
       </div>
     </Card>
   );

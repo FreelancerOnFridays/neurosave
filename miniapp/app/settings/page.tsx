@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { LanguageSelect } from "@/components/settings/LanguageSelect";
 import { TimezoneSelect } from "@/components/settings/TimezoneSelect";
@@ -13,11 +14,13 @@ import { ContactsSection } from "@/components/contacts/ContactsSection";
 import { IntegrationsSection } from "@/components/integrations/IntegrationsSection";
 import { useSettings } from "@/hooks/useSettings";
 import { useLang } from "@/contexts/LanguageContext";
+import { api } from "@/lib/api";
 import type { Theme } from "@/lib/types";
 
 export default function SettingsPage() {
   const { settings, isLoading, error, update } = useSettings();
   const { lang, setLang, t } = useLang();
+  const [tutorialState, setTutorialState] = useState<"idle" | "loading" | "done">("idle");
 
   if (isLoading) return <Spinner />;
   if (error || !settings)
@@ -72,6 +75,67 @@ export default function SettingsPage() {
 
       <ContactsSection />
       <IntegrationsSection />
+
+      <Card className="mt-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-tg-text">📖 {t("settings_send_tutorial")}</p>
+            <p className="text-xs text-tg-hint mt-0.5">{t("settings_send_tutorial_hint")}</p>
+          </div>
+          <button
+            disabled={tutorialState !== "idle"}
+            onClick={async () => {
+              setTutorialState("loading");
+              try {
+                await api.bot.sendTutorial();
+                setTutorialState("done");
+                setTimeout(() => setTutorialState("idle"), 3000);
+              } catch {
+                setTutorialState("idle");
+              }
+            }}
+            className="shrink-0 text-sm font-medium px-4 py-1.5 rounded-xl transition-opacity disabled:opacity-50"
+            style={{
+              background: "var(--tg-theme-button-color, #007aff)",
+              color: "var(--tg-theme-button-text-color, #fff)",
+            }}
+          >
+            {tutorialState === "loading"
+              ? t("settings_tutorial_sending")
+              : tutorialState === "done"
+              ? t("settings_tutorial_sent")
+              : "→"}
+          </button>
+        </div>
+      </Card>
+
+      <Card className="mt-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-tg-text">💬 {t("settings_contact_support")}</p>
+            <p className="text-xs text-tg-hint mt-0.5">{t("settings_contact_support_hint")}</p>
+          </div>
+          <button
+            onClick={() => {
+              const WebApp = (window as any)?.Telegram?.WebApp;
+              if (WebApp?.openLink) {
+                WebApp.openLink("https://t.me/lg1lx");
+              } else {
+                window.open("https://t.me/lg1lx", "_blank");
+              }
+            }}
+            className="shrink-0 text-sm font-medium px-4 py-1.5 rounded-xl transition-opacity"
+            style={{
+              background: "var(--tg-theme-button-color, #007aff)",
+              color: "var(--tg-theme-button-text-color, #fff)",
+            }}
+          >
+            {t("settings_contact_support_btn")}
+          </button>
+        </div>
+      </Card>
+
+      <p className="mt-6 mb-2 text-center text-xs text-tg-hint">NeuroSave v0.11 · Beta</p>
     </div>
   );
 }

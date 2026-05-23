@@ -17,7 +17,7 @@ _TZ_OFFSET_MAP: dict[str, str] = {
 }
 
 _CONFIG_FILE = Path(__file__).parent.parent / "bot_config.json"
-_SUPPORTED = ("ru", "en")
+_SUPPORTED = ("ru", "en", "ua")
 
 _STRINGS: dict[str, dict[str, str]] = {
     "ru": {
@@ -34,8 +34,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "settings_title": "⚙️ <b>Настройки NeuroSave</b>\n\nЯзык: <b>{current_lang}</b>\nЧасовой пояс: <b>{current_tz}</b>\n\nВыберите язык:",
         "lang_ru_label": "🇷🇺 Русский",
         "lang_en_label": "🇬🇧 English",
+        "lang_uk_label": "🇺🇦 Українська",
         "lang_set_ru": "✅ Язык изменён на Русский 🇷🇺",
         "lang_set_en": "✅ Language changed to English 🇬🇧",
+        "lang_set_uk": "✅ Мову змінено на Українську 🇺🇦",
         "lang_current_name": "Русский",
     },
     "en": {
@@ -52,9 +54,31 @@ _STRINGS: dict[str, dict[str, str]] = {
         "settings_title": "⚙️ <b>NeuroSave Settings</b>\n\nLanguage: <b>{current_lang}</b>\nTimezone: <b>{current_tz}</b>\n\nSelect language:",
         "lang_ru_label": "🇷🇺 Русский",
         "lang_en_label": "🇬🇧 English",
+        "lang_uk_label": "🇺🇦 Українська",
         "lang_set_ru": "✅ Язык изменён на Русский 🇷🇺",
         "lang_set_en": "✅ Language changed to English 🇬🇧",
+        "lang_set_uk": "✅ Мову змінено на Українську 🇺🇦",
         "lang_current_name": "English",
+    },
+    "ua": {
+        "task_saved": "📝 Завдання прийнято",
+        "tasks_empty": "Немає відкритих завдань.",
+        "task_done_answer": "✅ Завдання закрито",
+        "task_deleted_answer": "🗑 Завдання видалено",
+        "task_not_found": "Завдання не знайдено",
+        "nudge_sent": "👋 Нагадування надіслано",
+        "nudge_failed": "Не вдалось надіслати нагадування",
+        "btn_done": "✅ Готово",
+        "btn_remind": "👋 Нагадати",
+        "btn_delete": "🗑 Видалити",
+        "settings_title": "⚙️ <b>Налаштування NeuroSave</b>\n\nМова: <b>{current_lang}</b>\nЧасовий пояс: <b>{current_tz}</b>\n\nВиберіть мову:",
+        "lang_ru_label": "🇷🇺 Русский",
+        "lang_en_label": "🇬🇧 English",
+        "lang_uk_label": "🇺🇦 Українська",
+        "lang_set_ru": "✅ Язык изменён на Русский 🇷🇺",
+        "lang_set_en": "✅ Language changed to English 🇬🇧",
+        "lang_set_uk": "✅ Мову змінено на Українську 🇺🇦",
+        "lang_current_name": "Українська",
     },
 }
 
@@ -174,29 +198,6 @@ def set_theme(theme: str) -> None:
     if theme not in _SUPPORTED_THEMES:
         raise ValueError(f"Unsupported theme: {theme}")
     _config["theme"] = theme
-    _persist()
-
-
-@beartype
-def get_telethon_session() -> str | None:
-    val = _config.get("telethon_session", "")
-    return val if val else None
-
-
-@beartype
-def set_telethon_session(session_str: str | None) -> None:
-    _config["telethon_session"] = session_str or ""
-    _persist()
-
-
-@beartype
-def get_last_contact_sync() -> str:
-    return _config.get("last_contact_sync", "")
-
-
-@beartype
-def set_last_contact_sync(dt_str: str) -> None:
-    _config["last_contact_sync"] = dt_str
     _persist()
 
 

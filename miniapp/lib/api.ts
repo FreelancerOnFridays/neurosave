@@ -3,7 +3,6 @@ import type {
   CalendarEvent,
   Contact,
   ContactSyncStatus,
-  DriveFile,
   GhostStatus,
   GmailMessage,
   GmailThread,
@@ -78,8 +77,13 @@ export const api = {
       request<Task>(`/api/tasks/${id}/reminder`, { method: "DELETE" }),
     delete: (id: number) =>
       request<void>(`/api/tasks/${id}`, { method: "DELETE" }),
-    nudge: (id: number) =>
-      request<void>(`/api/tasks/${id}/nudge`, { method: "POST" }),
+    nudgePreview: (id: number) =>
+      request<{ text: string }>(`/api/tasks/${id}/nudge/preview`),
+    nudge: (id: number, text?: string) =>
+      request<void>(`/api/tasks/${id}/nudge`, {
+        method: "POST",
+        body: text ? JSON.stringify({ text }) : undefined,
+      }),
   },
   ghost: {
     status: () => request<GhostStatus>("/api/ghost"),
@@ -92,6 +96,16 @@ export const api = {
       request<GhostStatus>("/api/ghost/silent", {
         method: "PATCH",
         body: JSON.stringify({ silent_mode }),
+      }),
+    setExclusions: (contact_ids: number[], labels: string[]) =>
+      request<GhostStatus>("/api/ghost/exclusions", {
+        method: "PATCH",
+        body: JSON.stringify({ contact_ids, labels }),
+      }),
+    setAutoOff: (auto_off_at: string | null) =>
+      request<GhostStatus>("/api/ghost/auto-off", {
+        method: "PATCH",
+        body: JSON.stringify({ auto_off_at }),
       }),
     generateReply: () =>
       request<{ text: string }>("/api/ghost/generate-reply", { method: "POST" }),
@@ -108,13 +122,6 @@ export const api = {
   contacts: {
     list: () => request<Contact[]>("/api/contacts"),
     status: () => request<ContactSyncStatus>("/api/contacts/status"),
-    folders: () => request<{ name: string }[]>("/api/contacts/folders"),
-    sync: () => request<{ status: string }>("/api/contacts/sync", { method: "POST" }),
-    syncFolder: (folder_name: string) =>
-      request<{ status: string; folder: string }>("/api/contacts/sync-folder", {
-        method: "POST",
-        body: JSON.stringify({ folder_name }),
-      }),
     update: (user_id: number, body: { saved_name?: string | null; email?: string | null }) =>
       request<Contact>(`/api/contacts/${user_id}`, {
         method: "PATCH",
@@ -150,29 +157,12 @@ export const api = {
         method: "PUT",
         body: JSON.stringify({ enabled }),
       }),
-    googleDocsAuthUrl: () => request<{ url: string }>("/api/integrations/google-docs/auth-url"),
-    googleDocsDisconnect: () => request<void>("/api/integrations/google-docs", { method: "DELETE" }),
-    googleDocsFiles: () => request<DriveFile[]>("/api/integrations/google-docs/files"),
-    googleDocsCreate: (name: string, type: string) =>
-      request<{ id: string; url: string }>("/api/integrations/google-docs/create", {
-        method: "POST",
-        body: JSON.stringify({ name, type }),
-      }),
     calendarEvents: (days = 7) =>
       request<CalendarEvent[]>(`/api/integrations/google-calendar/events?days=${days}`),
     calendarToday: () =>
       request<CalendarEvent[]>("/api/integrations/calendar/today"),
   },
-  sync: {
-    status: () =>
-      request<{ authorized: boolean; configured: boolean; awaiting_auth: boolean; auth_step: string | null }>("/api/sync"),
-    start: () =>
-      request<{ done: boolean; message: string; next_step: string | null }>("/api/sync/start", { method: "POST" }),
-    input: (text: string) =>
-      request<{ done: boolean; message: string; next_step: string | null }>("/api/sync/input", {
-        method: "POST",
-        body: JSON.stringify({ text }),
-      }),
-    disconnect: () => request<void>("/api/sync/session", { method: "DELETE" }),
+  bot: {
+    sendTutorial: () => request<{ ok: boolean }>("/api/bot/tutorial", { method: "POST" }),
   },
 };

@@ -60,6 +60,31 @@ async def set_silent_mode(
 
 
 @beartype
+async def set_auto_off(
+    session: AsyncSession, owner_id: int, auto_off_at: datetime | None
+) -> GhostSession | None:
+    gs = await get_session(session, owner_id)
+    if gs is None:
+        return None
+    gs.auto_off_at = auto_off_at
+    return gs
+
+
+@beartype
+async def get_pending_auto_offs(session: AsyncSession) -> list[GhostSession]:
+    """Return active ghost sessions whose auto_off_at has passed."""
+    now = datetime.now(timezone.utc)
+    result = await session.execute(
+        select(GhostSession).where(
+            GhostSession.is_active.is_(True),
+            GhostSession.auto_off_at.isnot(None),
+            GhostSession.auto_off_at <= now,
+        )
+    )
+    return list(result.scalars().all())
+
+
+@beartype
 async def update_away_message(
     session: AsyncSession, owner_id: int, away_message: str
 ) -> None:
@@ -135,6 +160,29 @@ async def resolve_inquiry(
     inquiry.summary = summary
     inquiry.category = category
     inquiry.ghost_pending = False
+
+
+@beartype
+async def set_exclusions(
+    session: AsyncSession,
+    owner_id: int,
+    contact_ids: list[int],
+    labels: list[str],
+) -> GhostSession:
+    gs = await get_session(session, owner_id)
+    if gs is None:
+        gs = GhostSession(
+            owner_id=owner_id,
+            is_active=False,
+            excluded_contact_ids=contact_ids,
+            excluded_labels=labels,
+        )
+        session.add(gs)
+        await session.flush()
+        return gs
+    gs.excluded_contact_ids = contact_ids
+    gs.excluded_labels = labels
+    return gs
 
 
 @beartype

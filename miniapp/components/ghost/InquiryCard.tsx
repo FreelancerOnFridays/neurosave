@@ -10,7 +10,11 @@ const CATEGORY_COLORS: Record<string, string> = {
   Team: "#34c759",
   Sales: "#007aff",
   Spam: "#8e8e93",
+  Normal: "#5ac8fa",
 };
+
+// Labels that map to built-in categories — don't show as duplicate chips
+const CATEGORY_LABEL_KEYS = new Set(["команда", "team", "срочно", "urgent", "продажи", "sales", "спам", "spam"]);
 
 interface InquiryCardProps {
   inquiry: Inquiry;
@@ -65,6 +69,23 @@ export function InquiryCard({ inquiry }: InquiryCardProps) {
             <p className="text-xs text-tg-hint mt-0.5 leading-relaxed">
               {inquiry.summary}
             </p>
+          )}
+          {(inquiry.caller_labels ?? []).filter(l => !CATEGORY_LABEL_KEYS.has(l.toLowerCase())).length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {(inquiry.caller_labels ?? []).filter(l => !CATEGORY_LABEL_KEYS.has(l.toLowerCase())).map((l) => (
+                <span
+                  key={l}
+                  className="inline-flex items-center text-[10px] px-2 py-0.5 rounded-full font-medium"
+                  style={{
+                    background: "var(--tg-theme-button-color, #007aff)",
+                    color: "var(--tg-theme-button-text-color, #fff)",
+                    opacity: 0.8,
+                  }}
+                >
+                  {l}
+                </span>
+              ))}
+            </div>
           )}
         </div>
       </div>

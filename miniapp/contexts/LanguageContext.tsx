@@ -29,7 +29,8 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   const { data: settings } = useSWR("/api/settings", api.settings.get);
 
   useEffect(() => {
-    if (settings?.language) setLang(settings.language);
+    const l = settings?.language;
+    if (l === "ru" || l === "en" || l === "ua") setLang(l);
   }, [settings?.language]);
 
   return (

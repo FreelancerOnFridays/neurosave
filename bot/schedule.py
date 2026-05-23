@@ -52,10 +52,18 @@ async def build_today_schedule(
     )
 
     if not today:
-        msg = "📅 На сегодня задач нет." if lang == "ru" else "📅 Nothing scheduled for today."
+        msg = (
+            "📅 На сьогодні завдань немає." if lang == "ua" else
+            "📅 На сегодня задач нет." if lang == "ru" else
+            "📅 Nothing scheduled for today."
+        )
         return msg, None
 
-    header = "📅 <b>Расписание на сегодня:</b>" if lang == "ru" else "📅 <b>Today's schedule:</b>"
+    header = (
+        "📅 <b>Розклад на сьогодні:</b>" if lang == "ua" else
+        "📅 <b>Расписание на сегодня:</b>" if lang == "ru" else
+        "📅 <b>Today's schedule:</b>"
+    )
     lines = [header]
     builder = InlineKeyboardBuilder()
 
@@ -70,6 +78,10 @@ async def build_today_schedule(
         builder.button(text=btn_label, callback_data=f"sched_done:{t.id}")
 
     builder.adjust(1)
-    hint = "\nНажмите кнопку, чтобы отметить выполненным." if lang == "ru" else "\nTap to mark as done."
+    hint = (
+        "\nНатисніть кнопку, щоб відзначити виконаним." if lang == "ua" else
+        "\nНажмите кнопку, чтобы отметить выполненным." if lang == "ru" else
+        "\nTap to mark as done."
+    )
     lines.append(f"\n<i>{hint.strip()}</i>")
     return "\n".join(lines), builder.as_markup()

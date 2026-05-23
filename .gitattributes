@@ -1,0 +1,12 @@
+* text=auto eol=lf
+*.py text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.gitignore text eol=lf
+*.mp4 binary
+*.gif binary
+*.png binary
+*.jpg binary

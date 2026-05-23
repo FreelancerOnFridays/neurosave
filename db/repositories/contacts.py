@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from beartype import beartype
-from sqlalchemy import or_, select
+from sqlalchemy import case, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Contact
@@ -53,6 +53,10 @@ async def find_contacts_by_name(
     owner_id: int,
     name: str,
 ) -> list[Contact]:
+    exact_rank = case(
+        (or_(Contact.name.ilike(name), Contact.saved_name.ilike(name)), 0),
+        else_=1,
+    )
     result = await session.execute(
         select(Contact)
         .where(
@@ -62,7 +66,7 @@ async def find_contacts_by_name(
                 Contact.saved_name.ilike(f"%{name}%"),
             ),
         )
-        .order_by(Contact.last_seen.desc().nulls_last())
+        .order_by(exact_rank, Contact.last_seen.desc().nulls_last())
     )
     return list(result.scalars().all())
 
@@ -140,6 +144,18 @@ async def get_name_map(session: AsyncSession, owner_id: int) -> dict[int, str]:
         if display:
             mapping[user_id] = display
     return mapping
+
+
+@beartype
+async def get_saved_name_map(session: AsyncSession, owner_id: int) -> dict[int, str]:
+    """Returns {user_id: saved_name} only for contacts where the user explicitly set an alias."""
+    result = await session.execute(
+        select(Contact.user_id, Contact.saved_name).where(
+            Contact.owner_id == owner_id,
+            Contact.saved_name.isnot(None),
+        )
+    )
+    return {uid: sn for uid, sn in result.all() if sn}
 
 
 @beartype
